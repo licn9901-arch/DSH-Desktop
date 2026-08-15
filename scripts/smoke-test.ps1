@@ -143,7 +143,10 @@ finally {
     foreach ($name in $previousEnvironment.Keys) {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
     }
-    if (Test-Path -LiteralPath $smokeRoot) {
+    if (-not $succeeded) {
+        Write-Warning "Smoke diagnostics retained at: $smokeRoot"
+    }
+    elseif (Test-Path -LiteralPath $smokeRoot) {
         $systemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
         $resolvedSmokeRoot = [System.IO.Path]::GetFullPath($smokeRoot)
         if (-not $resolvedSmokeRoot.StartsWith($systemTemp, [System.StringComparison]::OrdinalIgnoreCase) -or

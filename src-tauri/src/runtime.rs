@@ -57,9 +57,10 @@ impl RuntimeInputs {
         resource_dir: &Path,
         allow_development_fallbacks: bool,
     ) -> Result<RuntimePaths, String> {
+        let resource_dir = normalize_windows_verbatim_path(resource_dir);
         Ok(RuntimePaths {
-            node: self.resolve_node(resource_dir, allow_development_fallbacks)?,
-            cli_entry: self.resolve_cli_entry(resource_dir, allow_development_fallbacks)?,
+            node: self.resolve_node(&resource_dir, allow_development_fallbacks)?,
+            cli_entry: self.resolve_cli_entry(&resource_dir, allow_development_fallbacks)?,
             working_directory: self.resolve_working_directory(),
             readiness_timeout: self.resolve_readiness_timeout(),
         })
@@ -170,6 +171,21 @@ impl RuntimeInputs {
             .map(|directory| directory.join(name))
             .find(|candidate| candidate.is_file())
     }
+}
+
+/// 将 Windows verbatim 路径转为普通 Win32 路径，避免 Node 把 CLI 参数误解析为盘符。
+fn normalize_windows_verbatim_path(path: &Path) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let value = path.as_os_str().to_string_lossy();
+        if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+            return PathBuf::from(format!(r"\\{rest}"));
+        }
+        if let Some(rest) = value.strip_prefix(r"\\?\") {
+            return PathBuf::from(rest);
+        }
+    }
+    path.to_path_buf()
 }
 
 /// 读取去除首尾空白后仍非空的环境变量。
@@ -298,6 +314,21 @@ mod tests {
         let bundled_node = resources.file("node/node.exe");
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         let resolved = inputs.resolve(resources.path(), false).unwrap();
+        assert_eq!(resolved.node, bundled_node);
+        assert_eq!(resolved.cli_entry, bundled_cli);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn release_mode_removes_windows_verbatim_prefix_from_runtime_paths() {
+        let resources = TestDirectory::new("runtime-verbatim");
+        let bundled_node = resources.file("node/node.exe");
+        let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+        let verbatim_resources = PathBuf::from(format!(r"\\?\{}", resources.path().display()));
+
+        let resolved = RuntimeInputs::default()
+            .resolve(&verbatim_resources, false)
+            .unwrap();
         assert_eq!(resolved.node, bundled_node);
         assert_eq!(resolved.cli_entry, bundled_cli);
     }

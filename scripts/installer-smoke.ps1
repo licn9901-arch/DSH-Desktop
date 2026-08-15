@@ -16,36 +16,68 @@ else {
 $installRoot = Join-Path $env:LOCALAPPDATA 'DeepSeek Harness Desktop'
 $installedExe = Join-Path $installRoot 'dsh-desktop.exe'
 $uninstaller = Join-Path $installRoot 'uninstall.exe'
+$bundledNode = Join-Path $installRoot 'node\node.exe'
+$bundledCli = Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh\lib\bin.js'
+$webIndexCandidates = @(
+    (Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh-web-frontend\dist\index.html'),
+    (Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\dsh-web-frontend\dist\index.html')
+)
 
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw "Installer not found: $installerPath"
 }
-if (Test-Path -LiteralPath $installRoot) {
+if ((Test-Path -LiteralPath $installedExe -PathType Leaf) -or
+    (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
     throw "Refusing to overwrite an existing installation: $installRoot"
 }
 
 $installed = $false
 try {
-    # CI 使用 NSIS 静默安装；应用生命周期仍由完整桌面冒烟脚本验证。
+    # 自动化使用 NSIS 静默安装；应用生命周期仍由完整桌面冒烟脚本验证。
     $installProcess = Start-Process -FilePath $installerPath -ArgumentList '/S' -PassThru -Wait
-    if ($installProcess.ExitCode -ne 0 -or -not (Test-Path -LiteralPath $installedExe -PathType Leaf)) {
+    $installed = Test-Path -LiteralPath $installRoot -PathType Container
+    if ($installProcess.ExitCode -ne 0) {
         throw "Silent installation failed with exit code $($installProcess.ExitCode)."
     }
-    $installed = $true
+
+    # NSIS 可能把实际复制交给后台子进程；所有关键资源落盘后才能启动应用。
+    $installDeadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    do {
+        $installed = Test-Path -LiteralPath $installRoot -PathType Container
+        $webReady = $webIndexCandidates | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf } | Select-Object -First 1
+        $installReady = (Test-Path -LiteralPath $installedExe -PathType Leaf) -and
+            (Test-Path -LiteralPath $uninstaller -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledNode -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledCli -PathType Leaf) -and
+            $webReady
+        if (-not $installReady) {
+            Start-Sleep -Milliseconds 250
+        }
+    } while (-not $installReady -and (Get-Date) -lt $installDeadline)
+    if (-not $installReady) {
+        throw "Installation did not finish writing the bundled runtime within $TimeoutSeconds seconds."
+    }
 
     & (Join-Path $PSScriptRoot 'smoke-test.ps1') `
         -Exe $installedExe `
         -TimeoutSeconds $TimeoutSeconds `
         -UseBundledRuntime
-    if ($LASTEXITCODE -ne 0) {
-        throw "Installed application smoke failed with exit code $LASTEXITCODE."
-    }
 }
 finally {
+    if ($installed) {
+        $uninstallerDeadline = (Get-Date).AddSeconds(60)
+        while (-not (Test-Path -LiteralPath $uninstaller -PathType Leaf) -and (Get-Date) -lt $uninstallerDeadline) {
+            Start-Sleep -Milliseconds 250
+        }
+    }
     if ($installed -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
         $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru -Wait
         if ($uninstallProcess.ExitCode -ne 0) {
             throw "Silent uninstall failed with exit code $($uninstallProcess.ExitCode)."
+        }
+        $uninstallDeadline = (Get-Date).AddSeconds(60)
+        while ((Test-Path -LiteralPath $installedExe) -and (Get-Date) -lt $uninstallDeadline) {
+            Start-Sleep -Milliseconds 250
         }
     }
 }
