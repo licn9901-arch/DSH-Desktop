@@ -2,10 +2,11 @@
 
 ## 代码与依赖
 
-- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.1`。
+- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.2`。
 - [ ] `runtime.lock.json`、Node SHA-256、DSH package lock 完全匹配。
+- [ ] `plugins.lock.json`、GitHub 归档 SHA-256、npm integrity 与插件 package lock 完全匹配。
 - [ ] staged 边界不包含 `resources`、`.runtime-cache`、`target`、日志、本机路径或安装包。
-- [ ] `npm audit` 与 `runtime-host` 的生产依赖审计通过。
+- [ ] 主项目、`runtime-host` 与 `plugin-runtime` 三组 `npm audit` 通过。
 
 ## 自动化门禁
 
@@ -14,6 +15,7 @@
 - [ ] fake Host 冒烟验证就绪、单实例、关闭到托盘和显式退出。
 - [ ] 安装器冒烟验证安装、内置运行时启动、生命周期、卸载和无残留进程。
 - [ ] 缺少任一内置运行时关键文件时构建失败。
+- [ ] 四个插件、Skin Center、本地 GenUI 资产和 Windows x64 PTY 缺少任一文件时构建失败。
 
 ## 发布产物
 

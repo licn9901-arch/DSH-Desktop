@@ -25,7 +25,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.1` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.2` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3` 与 `@deepseek-ai/dsh 0.1.0-rc.6`，首次启动无需联网，
@@ -41,11 +41,28 @@
 - Host 页面不获得任何 Tauri capability；本地启动页使用严格 CSP。
 - 日志包含时间、级别与 PID，并进行敏感字段脱敏和 `5 MiB x 3` 轮转。
 
+## 内置插件
+
+`v0.1.0-preview.2` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
+
+| 插件 | 版本 | 默认行为与权限 |
+|---|---:|---|
+| [`dsh-at-file`](https://github.com/omdsh-dev/dsh-at-file) | 0.6.0 | 搜索工作区路径，只插入相对路径引用，不注入文件内容 |
+| [`@omdsh-dev/dsh-genui`](https://github.com/omdsh-dev/dsh-genui) | 0.8.4 | 本地渲染 GenUI、Mermaid 和 Three.js；action 会作为消息回传模型 |
+| [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) | 0.12.2 | 可操作文件、Git 和本机 PTY；模型终端工具保持关闭，首次托管安装关闭 HTTP/HTTPS 接管 |
+| [`@linxin666/dsh-skins`](https://github.com/zhu1090093659/dsh-web-ui) | 0.1.16 | 只安装 Skin Center 与聚合皮肤；默认仍用官方皮肤，应用皮肤会写入 `$DSH_HOME/cordis.patch.yml` |
+
+当前版本不提供动态插件市场或安装按钮。构建期使用 `plugins.lock.json` 校验正式发布物，禁用
+npm lifecycle scripts，运行时不联网下载插件；动态安装、权限确认、事务升级与受控 Host 重启将在后续版本规划。
+
 ## 工作方式
 
 ```mermaid
 flowchart LR
     A["Desktop shell"] -->|"spawn fixed runtime"| B["Bundled Node + dsh web"]
+    A -->|"atomic managed profile"| P["Pinned offline plugins"]
+    P --> B
     B -->|"dsh web: loopback URL"| C["Strict readiness parser"]
     C -->|"same origin only"| D["WebView2"]
     D -->|"external HTTP(S)"| E["System browser"]
@@ -94,8 +111,10 @@ npm ci
 npm run build
 ```
 
-构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，使用固定 `package-lock.json` 执行
-`npm ci --omit=dev`，验证 Node、DSH CLI、Web 前端、版本和许可证后才调用 Tauri 打包。
+构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，并按 `plugins.lock.json` 校验插件
+归档与 npm integrity。三组固定 lockfile 分别执行 `npm ci`；插件组额外使用
+`--omit=dev --ignore-scripts`。Node、DSH CLI、Web 前端、插件本地资产、PTY 和许可证全部验证后
+才调用 Tauri 打包。
 暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
 `src-tauri/target/release/bundle/nsis`。
 
@@ -103,6 +122,7 @@ npm run build
 
 ```powershell
 pwsh -NoProfile -File .\scripts\stage-runtime.ps1 -Offline
+pwsh -NoProfile -File .\scripts\stage-plugins.ps1 -Offline
 ```
 
 ## 测试与质量门禁
@@ -113,6 +133,9 @@ npm run lint
 npm test
 npm audit
 Push-Location runtime-host
+npm audit --omit=dev
+Pop-Location
+Push-Location plugin-runtime
 npm audit --omit=dev
 Pop-Location
 npm run coverage
@@ -128,7 +151,7 @@ npm run smoke
 
 - 启动失败：查看日志中的 `level=ERROR`、Host PID 和真实退出码。
 - 窗口关闭后仍有任务：这是关闭到托盘的预期行为，请从托盘菜单重新打开或显式退出。
-- 构建提示运行时缺失或哈希不匹配：不要绕过校验，清理 `.runtime-cache` 后重新暂存。
+- 构建提示运行时或插件缺失、哈希不匹配：不要绕过校验，清理对应 `.runtime-cache` 后重新暂存。
 - 安装器显示未知发布者：首个预览版未签名，请先核对 Release 提供的 SHA-256。
 
 ## 更新与卸载
@@ -140,7 +163,7 @@ npm run smoke
 ## 当前边界
 
 - 仅支持 Windows x64，不支持 macOS、Linux 或 ARM64。
-- 不包含自动更新、开机自启、插件市场、手机远控或 Channels。
+- 不包含自动更新、开机自启、动态插件市场、手机远控或 Channels。
 - 本机已有的 `0.1.0` 原型不保证原地升级；测试预览版前请先卸载原型并保留用户数据。
 
 ## 参与贡献

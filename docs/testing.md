@@ -8,6 +8,10 @@ npm run validate:icons
 npm run lint
 npm test
 npm audit
+Push-Location runtime-host; npm audit --omit=dev; Pop-Location
+Push-Location plugin-runtime; npm audit --omit=dev; Pop-Location
+npm run stage:runtime
+npm run stage:plugins
 npm run coverage
 npm run smoke
 ```
@@ -27,7 +31,7 @@ pwsh -NoProfile -File scripts/installer-smoke.ps1 `
 
 ## 覆盖范围
 
-Rust 单元测试覆盖严格就绪协议、Host 原点导航、运行时路径优先级、启动超时、启动失败、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。Host supervisor 通过注入 fake child 和 fake process-tree terminator 验证，不启动真实 DSH，也不使用固定等待时间。
+Rust 单元测试覆盖严格就绪协议、Host 原点导航、运行时路径优先级、启动超时、启动失败、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖锁文件完整性、bundle 顺序、用户安装优先、用户禁用、旧侧栏停用、重复迁移、缺失资源、事务提交/回滚、Better Sidebar revision 设置和真实 Windows junction。Host supervisor 通过注入 fake child 和 fake process-tree terminator 验证，不启动真实 DSH，也不使用固定等待时间。
 
 Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 
@@ -40,4 +44,4 @@ Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 
 脚本失败兜底只终止本次记录的桌面 PID 与 Host PID，禁止扫描或批量终止其他 `node.exe`。
 
-发布验证先用 fake Host 检查可注入 supervisor，再安装 NSIS 包并用内置 Node/DSH 重跑同一套生命周期检查。卸载检查只验证本应用安装目录被移除，不触碰 DSH 用户会话与配置。
+发布验证先用 fake Host 检查可注入 supervisor 和侧栏设置 API，再安装 NSIS 包并用内置 Node/DSH/插件重跑同一套生命周期检查。卸载检查验证本应用安装目录被移除，且不触碰 DSH 用户会话、profile、插件 marker 与配置。
