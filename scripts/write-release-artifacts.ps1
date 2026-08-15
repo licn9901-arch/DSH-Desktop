@@ -28,10 +28,11 @@ if (Test-Path -LiteralPath $deployRoot) {
 }
 New-Item -ItemType Directory -Path $deployRoot | Out-Null
 
-$publishedInstaller = Join-Path $deployRoot $installer.Name
+$publishedInstallerName = $installer.Name.Replace(' ', '.')
+$publishedInstaller = Join-Path $deployRoot $publishedInstallerName
 Copy-Item -LiteralPath $installer.FullName -Destination $publishedInstaller
 $hash = (Get-FileHash -LiteralPath $publishedInstaller -Algorithm SHA256).Hash.ToLowerInvariant()
-"$hash  $($installer.Name)" | Set-Content -LiteralPath "$publishedInstaller.sha256" -Encoding ascii
+"$hash  $publishedInstallerName" | Set-Content -LiteralPath "$publishedInstaller.sha256" -Encoding ascii
 
 $licenseSource = Join-Path $projectRoot 'src-tauri\resources\host\third-party-licenses.json'
 if (-not (Test-Path -LiteralPath $licenseSource -PathType Leaf)) {
@@ -48,7 +49,7 @@ $sizeMiB = [Math]::Round($installer.Length / 1MB, 2)
 - Target: Windows x64 NSIS
 - Node.js: $($runtimeLock.node.version)
 - @deepseek-ai/dsh: $($runtimeLock.dsh.version)
-- Installer: $($installer.Name)
+- Installer: $publishedInstallerName
 - Installer size: $($installer.Length) bytes ($sizeMiB MiB)
 - SHA-256: $hash
 - Authenticode: unsigned preview
