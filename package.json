@@ -1,13 +1,14 @@
 {
   "name": "dsh-desktop-tauri",
-  "version": "0.1.0",
+  "version": "0.1.0-preview.1",
   "private": true,
   "description": "Tauri desktop shell for DeepSeek Harness (dsh web)",
   "scripts": {
     "tauri": "tauri",
-      "generate:icons": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
-    "dev": "npm run generate:icons && tauri dev",
-    "build": "npm run generate:icons && tauri build"
+    "generate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
+    "validate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/validate-icons.ps1",
+    "dev": "npm run validate:icons && tauri dev",
+    "build": "npm run validate:icons && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

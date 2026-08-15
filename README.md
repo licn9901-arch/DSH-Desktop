@@ -2,6 +2,8 @@
 
 把 DeepSeek Harness 的 Web GUI 封装成 Windows 桌面应用（方案 B：Tauri v2 + WebView2）。
 
+> **非官方声明：** 本项目是社区维护的桌面封装，不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
+
 ## 原理
 
 DSH 的界面本质是"本地 HTTP 服务 + 浏览器页面"：`dsh web` 在回环地址上起一个服务，
@@ -35,7 +37,7 @@ dsh-tauri/
     ├── capabilities/default.json
     ├── icons/whale.svg  # DeepSeek Harness 官方黑色鲸鱼 SVG 源图
     ├── nsis/installer.nsh  # NSIS 钩子：额外创建开始菜单卸载快捷方式
-    └── src/main.rs      # 全部逻辑：spawn host、无黑窗启动、就绪解析、窗口、退出清理
+    └── src/             # 应用入口、Host supervisor、运行时、生命周期、日志与就绪解析
 ```
 
 ## 环境要求（首次一次性）
