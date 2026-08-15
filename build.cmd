@@ -41,19 +41,19 @@ if not defined HAVE_MSVC (
   echo        The build below will fail if it is truly missing.
 )
 
-echo [1/3] Rendering black-whale app icons from whale.svg (Edge headless)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\generate-icons.ps1"
+echo [1/3] Validating fixed whale icon assets...
+pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\validate-icons.ps1"
 if errorlevel 1 goto :fail
 
 if not exist "node_modules\.bin\tauri.cmd" (
   echo [2/3] Installing @tauri-apps/cli...
-  call npm install
+  call npm ci
   if errorlevel 1 goto :fail
 )
 
 echo [3/3] Building. First build downloads and compiles ~400 crates:
 echo       allow 10-30 minutes on a typical machine.
-call npx tauri build
+call npm run build
 if errorlevel 1 (
   echo.
   echo [ERROR] tauri build failed. Scroll up for details.

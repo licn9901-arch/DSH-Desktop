@@ -17,6 +17,10 @@
     "targets": ["nsis"],
     "category": "DeveloperTool",
     "shortDescription": "DeepSeek Harness desktop client",
+    "resources": {
+      "resources/node/": "node/",
+      "resources/host/": "host/"
+    },
     "icon": ["icons/icon.ico", "icons/icon.png"],
     "windows": {
       "nsis": {

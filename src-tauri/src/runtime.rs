@@ -17,9 +17,9 @@ pub struct RuntimePaths {
 }
 
 impl RuntimePaths {
-    /// 按环境覆盖、应用资源和本机安装的顺序解析原型运行时。
+    /// 解析桌面运行时；开发构建允许环境覆盖，发布构建只接受内置资源。
     pub fn resolve(resource_dir: &Path) -> Result<Self, String> {
-        RuntimeInputs::from_environment().resolve(resource_dir)
+        RuntimeInputs::from_environment().resolve(resource_dir, cfg!(debug_assertions))
     }
 }
 
@@ -52,42 +52,76 @@ impl RuntimeInputs {
     }
 
     /// 根据已捕获输入生成完整运行时路径。
-    fn resolve(&self, resource_dir: &Path) -> Result<RuntimePaths, String> {
+    fn resolve(
+        &self,
+        resource_dir: &Path,
+        allow_development_fallbacks: bool,
+    ) -> Result<RuntimePaths, String> {
         Ok(RuntimePaths {
-            node: self.resolve_node(resource_dir),
-            cli_entry: self.resolve_cli_entry(resource_dir)?,
+            node: self.resolve_node(resource_dir, allow_development_fallbacks)?,
+            cli_entry: self.resolve_cli_entry(resource_dir, allow_development_fallbacks)?,
             working_directory: self.resolve_working_directory(),
             readiness_timeout: self.resolve_readiness_timeout(),
         })
     }
 
     /// 解析 Node 可执行文件，优先使用显式覆盖和应用内置副本。
-    fn resolve_node(&self, resource_dir: &Path) -> PathBuf {
-        if let Some(value) = &self.node_override {
-            return PathBuf::from(value);
+    fn resolve_node(
+        &self,
+        resource_dir: &Path,
+        allow_development_fallbacks: bool,
+    ) -> Result<PathBuf, String> {
+        if allow_development_fallbacks {
+            if let Some(value) = &self.node_override {
+                return Ok(PathBuf::from(value));
+            }
         }
         let bundled = resource_dir.join("node/node.exe");
         if bundled.is_file() {
-            return bundled;
+            return Ok(bundled);
         }
-        self.find_in_path("node.exe")
-            .unwrap_or_else(|| PathBuf::from("node"))
+        if allow_development_fallbacks {
+            return Ok(self
+                .find_in_path("node.exe")
+                .unwrap_or_else(|| PathBuf::from("node")));
+        }
+        Err(format!(
+            "bundled Node runtime is missing: {}",
+            bundled.display()
+        ))
     }
 
-    /// 解析 DSH CLI 入口，并在所有候选路径都不存在时返回可诊断错误。
-    fn resolve_cli_entry(&self, resource_dir: &Path) -> Result<PathBuf, String> {
-        if let Some(value) = &self.cli_override {
-            let path = PathBuf::from(value);
-            return path.is_file().then_some(path).ok_or_else(|| {
-                format!("DSH_DESKTOP_CLI_ENTRY is set but the file does not exist: {value}")
-            });
+    /// 解析 DSH CLI；release 模式只接受安装包携带的固定入口。
+    fn resolve_cli_entry(
+        &self,
+        resource_dir: &Path,
+        allow_development_fallbacks: bool,
+    ) -> Result<PathBuf, String> {
+        if allow_development_fallbacks {
+            if let Some(value) = &self.cli_override {
+                let path = PathBuf::from(value);
+                return path.is_file().then_some(path).ok_or_else(|| {
+                    format!("DSH_DESKTOP_CLI_ENTRY is set but the file does not exist: {value}")
+                });
+            }
         }
 
-        let mut candidates = vec![
-            resource_dir.join("host").join(CLI_RELATIVE_PATH),
-            PathBuf::from(r"C:\Program Files\DeepSeek Harness\resources\host")
-                .join(CLI_RELATIVE_PATH),
-        ];
+        let bundled = resource_dir.join("host").join(CLI_RELATIVE_PATH);
+        if bundled.is_file() {
+            return Ok(bundled);
+        }
+        if !allow_development_fallbacks {
+            return Err(format!(
+                "bundled DSH CLI entry is missing: {}",
+                bundled.display()
+            ));
+        }
+
+        let mut candidates =
+            vec![
+                PathBuf::from(r"C:\Program Files\DeepSeek Harness\resources\host")
+                    .join(CLI_RELATIVE_PATH),
+            ];
         if let Some(node) = self.find_in_path("node.exe") {
             if let Some(directory) = node.parent() {
                 candidates.push(directory.join(CLI_RELATIVE_PATH));
@@ -202,7 +236,7 @@ mod tests {
             path_directories: vec![path_runtime.path().to_owned()],
             ..Default::default()
         };
-        let resolved = inputs.resolve(resources.path()).unwrap();
+        let resolved = inputs.resolve(resources.path(), true).unwrap();
         assert_eq!(resolved.node, bundled_node);
         assert_eq!(resolved.cli_entry, bundled_cli);
         assert_eq!(resolved.working_directory, resources.path());
@@ -221,7 +255,7 @@ mod tests {
             readiness_timeout: Some("12".to_owned()),
             ..Default::default()
         };
-        let resolved = inputs.resolve(resources.path()).unwrap();
+        let resolved = inputs.resolve(resources.path(), true).unwrap();
         assert_eq!(resolved.node, node);
         assert_eq!(resolved.cli_entry, cli);
         assert_eq!(resolved.readiness_timeout, Duration::from_secs(12));
@@ -235,7 +269,7 @@ mod tests {
             readiness_timeout: Some("invalid".to_owned()),
             ..Default::default()
         };
-        let error = inputs.resolve(resources.path()).unwrap_err();
+        let error = inputs.resolve(resources.path(), true).unwrap_err();
         assert!(error.contains("does not exist"));
 
         let timeout_inputs = RuntimeInputs {
@@ -246,5 +280,25 @@ mod tests {
             timeout_inputs.resolve_readiness_timeout(),
             DEFAULT_READINESS_TIMEOUT
         );
+    }
+
+    #[test]
+    fn release_mode_requires_bundled_runtime_and_ignores_overrides() {
+        let resources = TestDirectory::new("runtime-release");
+        let overrides = TestDirectory::new("runtime-release-overrides");
+        let node_override = overrides.file("node.exe");
+        let cli_override = overrides.file("bin.js");
+        let inputs = RuntimeInputs {
+            node_override: Some(node_override.display().to_string()),
+            cli_override: Some(cli_override.display().to_string()),
+            ..Default::default()
+        };
+        assert!(inputs.resolve(resources.path(), false).is_err());
+
+        let bundled_node = resources.file("node/node.exe");
+        let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+        let resolved = inputs.resolve(resources.path(), false).unwrap();
+        assert_eq!(resolved.node, bundled_node);
+        assert_eq!(resolved.cli_entry, bundled_cli);
     }
 }

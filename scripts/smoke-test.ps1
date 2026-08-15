@@ -16,13 +16,15 @@ if (-not (Test-Path -LiteralPath $fakeHostPath -PathType Leaf)) {
 
 $nodePath = (Get-Command node.exe -ErrorAction Stop).Source
 $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-desktop-smoke-" + [guid]::NewGuid().ToString('N'))
-$localAppData = Join-Path $smokeRoot 'localappdata'
+$logDirectory = Join-Path $smokeRoot 'logs'
 $workingDirectory = Join-Path $smokeRoot 'workspace'
-$logPath = Join-Path $localAppData 'dsh-desktop\dsh-desktop.log'
-New-Item -ItemType Directory -Force -Path $localAppData, $workingDirectory | Out-Null
+$logPath = Join-Path $logDirectory 'dsh-desktop.log'
+New-Item -ItemType Directory -Force -Path $logDirectory, $workingDirectory | Out-Null
 
 $previousEnvironment = @{
-    LOCALAPPDATA = $env:LOCALAPPDATA
+    USERPROFILE = $env:USERPROFILE
+    HOME = $env:HOME
+    DSH_DESKTOP_LOG_DIR = $env:DSH_DESKTOP_LOG_DIR
     DSH_DESKTOP_NODE_EXECUTABLE = $env:DSH_DESKTOP_NODE_EXECUTABLE
     DSH_DESKTOP_CLI_ENTRY = $env:DSH_DESKTOP_CLI_ENTRY
     DSH_DESKTOP_CWD = $env:DSH_DESKTOP_CWD
@@ -34,7 +36,9 @@ $hostProcessId = $null
 $succeeded = $false
 
 try {
-    $env:LOCALAPPDATA = $localAppData
+    $env:USERPROFILE = $smokeRoot
+    $env:HOME = $smokeRoot
+    $env:DSH_DESKTOP_LOG_DIR = $logDirectory
     $env:DSH_DESKTOP_NODE_EXECUTABLE = $nodePath
     $env:DSH_DESKTOP_CLI_ENTRY = $fakeHostPath
     $env:DSH_DESKTOP_CWD = $workingDirectory
@@ -65,7 +69,7 @@ try {
         Start-Sleep -Milliseconds 100
     }
     if (-not $ready -or -not $hostProcessId) {
-        throw 'Timed out waiting for the fake Host readiness and PID log.'
+        throw 'Timed out waiting for Host readiness and PID log.'
     }
 
     # 二次启动必须快速退出，并由现有实例处理聚焦，不能再创建 Host。
@@ -128,7 +132,25 @@ finally {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
     }
     if (Test-Path -LiteralPath $smokeRoot) {
-        Remove-Item -LiteralPath $smokeRoot -Recurse -Force
+        $systemTemp = [System.IO.Path]::GetFullPath([System.IO.Path]::GetTempPath()).TrimEnd('\') + '\'
+        $resolvedSmokeRoot = [System.IO.Path]::GetFullPath($smokeRoot)
+        if (-not $resolvedSmokeRoot.StartsWith($systemTemp, [System.StringComparison]::OrdinalIgnoreCase) -or
+            -not ([System.IO.Path]::GetFileName($resolvedSmokeRoot)).StartsWith('dsh-desktop-smoke-')) {
+            throw "Refusing to delete an unexpected smoke directory: $resolvedSmokeRoot"
+        }
+
+        $cleanupDeadline = (Get-Date).AddSeconds(15)
+        do {
+            try {
+                Remove-Item -LiteralPath $resolvedSmokeRoot -Recurse -Force -ErrorAction Stop
+            }
+            catch {
+                if ((Get-Date) -ge $cleanupDeadline) {
+                    throw
+                }
+                Start-Sleep -Milliseconds 250
+            }
+        } while (Test-Path -LiteralPath $resolvedSmokeRoot)
     }
 }
 

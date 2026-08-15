@@ -6,12 +6,12 @@ title DeepSeek Harness Desktop - Dev
 where node >nul 2>nul || (echo [ERROR] Node.js not found in PATH & goto :fail)
 where cargo >nul 2>nul || (echo [ERROR] Rust toolchain not found. Install via https://rustup.rs & goto :fail)
 
-echo Rendering black-whale app icons from whale.svg (Edge headless)...
-powershell -NoProfile -ExecutionPolicy Bypass -File "scripts\generate-icons.ps1"
+echo Validating fixed whale icon assets...
+pwsh -NoProfile -ExecutionPolicy Bypass -File "scripts\validate-icons.ps1"
 if errorlevel 1 goto :fail
 
 if not exist "node_modules\.bin\tauri.cmd" (
-  call npm install
+  call npm ci
   if errorlevel 1 goto :fail
 )
 

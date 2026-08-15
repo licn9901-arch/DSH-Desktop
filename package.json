@@ -11,8 +11,10 @@
     "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
     "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --fail-under-lines 80",
     "smoke": "pwsh -NoProfile -File scripts/smoke-test.ps1",
+    "stage:runtime": "pwsh -NoProfile -File scripts/stage-runtime.ps1",
+    "verify:runtime": "pwsh -NoProfile -File scripts/verify-runtime.ps1",
     "dev": "npm run validate:icons && tauri dev",
-    "build": "npm run validate:icons && tauri build"
+    "build": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"

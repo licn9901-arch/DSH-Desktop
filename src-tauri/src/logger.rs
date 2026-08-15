@@ -35,6 +35,11 @@ impl LogLevel {
 
 /// 返回当前用户可写的桌面应用日志路径。
 pub fn log_file_path() -> PathBuf {
+    if let Some(directory) = env::var_os("DSH_DESKTOP_LOG_DIR").filter(|value| !value.is_empty()) {
+        let directory = PathBuf::from(directory);
+        let _ = fs::create_dir_all(&directory);
+        return directory.join("dsh-desktop.log");
+    }
     let base = env::var("LOCALAPPDATA")
         .or_else(|_| env::var("TEMP"))
         .unwrap_or_else(|_| ".".into());
