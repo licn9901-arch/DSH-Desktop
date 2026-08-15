@@ -9,10 +9,12 @@
     "validate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/validate-icons.ps1",
     "lint": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
     "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
-    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --fail-under-lines 80",
+    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --locked --ignore-filename-regex '(desktop|lib|main)\\.rs$' --fail-under-lines 80",
     "smoke": "pwsh -NoProfile -File scripts/smoke-test.ps1",
+    "smoke:installer": "pwsh -NoProfile -File scripts/installer-smoke.ps1",
     "stage:runtime": "pwsh -NoProfile -File scripts/stage-runtime.ps1",
     "verify:runtime": "pwsh -NoProfile -File scripts/verify-runtime.ps1",
+    "release:artifacts": "pwsh -NoProfile -File scripts/write-release-artifacts.ps1",
     "dev": "npm run validate:icons && tauri dev",
     "build": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && tauri build"
   },

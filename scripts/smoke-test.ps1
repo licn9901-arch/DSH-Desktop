@@ -1,11 +1,17 @@
 param(
     [string]$Exe = '..\src-tauri\target\debug\dsh-desktop.exe',
-    [int]$TimeoutSeconds = 30
+    [int]$TimeoutSeconds = 30,
+    [switch]$UseBundledRuntime
 )
 
 $ErrorActionPreference = 'Stop'
 
-$exePath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $Exe))
+$exePath = if ([System.IO.Path]::IsPathRooted($Exe)) {
+    [System.IO.Path]::GetFullPath($Exe)
+}
+else {
+    [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $Exe))
+}
 $fakeHostPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'fixtures\fake-host.js'))
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Desktop executable not found: $exePath"
@@ -14,7 +20,7 @@ if (-not (Test-Path -LiteralPath $fakeHostPath -PathType Leaf)) {
     throw "Fake Host entry not found: $fakeHostPath"
 }
 
-$nodePath = (Get-Command node.exe -ErrorAction Stop).Source
+$nodePath = if ($UseBundledRuntime) { $null } else { (Get-Command node.exe -ErrorAction Stop).Source }
 $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-desktop-smoke-" + [guid]::NewGuid().ToString('N'))
 $logDirectory = Join-Path $smokeRoot 'logs'
 $workingDirectory = Join-Path $smokeRoot 'workspace'
@@ -39,10 +45,16 @@ try {
     $env:USERPROFILE = $smokeRoot
     $env:HOME = $smokeRoot
     $env:DSH_DESKTOP_LOG_DIR = $logDirectory
-    $env:DSH_DESKTOP_NODE_EXECUTABLE = $nodePath
-    $env:DSH_DESKTOP_CLI_ENTRY = $fakeHostPath
+    if ($UseBundledRuntime) {
+        Remove-Item Env:DSH_DESKTOP_NODE_EXECUTABLE -ErrorAction SilentlyContinue
+        Remove-Item Env:DSH_DESKTOP_CLI_ENTRY -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:DSH_DESKTOP_NODE_EXECUTABLE = $nodePath
+        $env:DSH_DESKTOP_CLI_ENTRY = $fakeHostPath
+    }
     $env:DSH_DESKTOP_CWD = $workingDirectory
-    $env:DSH_DESKTOP_READY_TIMEOUT_SECS = '10'
+    $env:DSH_DESKTOP_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
 
     $desktopProcess = Start-Process -FilePath $exePath -PassThru
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)

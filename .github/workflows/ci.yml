@@ -1,0 +1,123 @@
+name: Windows CI and Preview Release
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: 22.22.3
+  RUST_VERSION: 1.94.1
+  CARGO_LLVM_COV_VERSION: 0.8.5
+
+jobs:
+  build:
+    name: Quality, package and smoke
+    runs-on: windows-latest
+    timeout-minutes: 90
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            runtime-host/package-lock.json
+
+      - name: Set up locked Rust toolchain
+        shell: pwsh
+        run: |
+          rustup toolchain install $env:RUST_VERSION --profile minimal --component rustfmt --component clippy --component llvm-tools-preview
+          rustup default $env:RUST_VERSION
+
+      - name: Install project dependencies
+        run: npm ci
+
+      - name: Validate icons and Rust quality gates
+        run: |
+          npm run validate:icons
+          npm run lint
+          npm test
+
+      - name: Audit npm dependencies
+        shell: pwsh
+        run: |
+          npm audit
+          Push-Location runtime-host
+          npm audit --omit=dev
+          Pop-Location
+
+      - name: Enforce Rust coverage
+        shell: pwsh
+        run: |
+          cargo install cargo-llvm-cov --locked --version $env:CARGO_LLVM_COV_VERSION
+          npm run coverage
+
+      - name: Run fake Host desktop smoke
+        shell: pwsh
+        run: |
+          cargo build --manifest-path src-tauri/Cargo.toml --locked
+          pwsh -NoProfile -File scripts/smoke-test.ps1 -TimeoutSeconds 60
+
+      - name: Stage and verify pinned runtime
+        shell: pwsh
+        run: |
+          npm run stage:runtime
+          npm run verify:runtime
+
+      - name: Build NSIS installer
+        run: npx tauri build
+
+      - name: Run installer smoke
+        shell: pwsh
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          $installer = Get-ChildItem 'src-tauri\target\release\bundle\nsis' -Filter "*_${version}_x64-setup.exe" -File -ErrorAction Stop
+          if (@($installer).Count -ne 1) { throw 'Expected exactly one NSIS installer.' }
+          pwsh -NoProfile -File scripts/installer-smoke.ps1 -Installer $installer.FullName -TimeoutSeconds 180
+
+      - name: Write release artifacts
+        shell: pwsh
+        run: pwsh -NoProfile -File scripts/write-release-artifacts.ps1
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dsh-tauri-${{ github.run_id }}
+          path: .deploy-artifacts/*
+          if-no-files-found: error
+          retention-days: 14
+
+  release:
+    name: Publish prerelease
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout release notes
+        uses: actions/checkout@v4
+
+      - name: Download verified artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dsh-tauri-${{ github.run_id }}
+          path: .deploy-artifacts
+          merge-multiple: true
+
+      - name: Create GitHub prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" .deploy-artifacts/* --prerelease --verify-tag --title "DeepSeek Harness Desktop $GITHUB_REF_NAME" --notes-file RELEASE_NOTES.md

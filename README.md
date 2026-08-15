@@ -1,166 +1,151 @@
-# DeepSeek Harness Desktop（Tauri 版）
+# DeepSeek Harness Desktop
 
-把 DeepSeek Harness 的 Web GUI 封装成 Windows 桌面应用（方案 B：Tauri v2 + WebView2）。
+<p align="center">
+  <img src="src-tauri/icons/icon.png" width="128" height="128" alt="DeepSeek Harness Desktop whale icon">
+</p>
 
-> **非官方声明：** 本项目是社区维护的桌面封装，不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
+<p align="center">
+  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows 桌面封装。
+</p>
 
-## 原理
+<p align="center">
+  <a href="https://github.com/licn9901-arch/dsh-tauri/actions/workflows/ci.yml"><img src="https://github.com/licn9901-arch/dsh-tauri/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/licn9901-arch/dsh-tauri/releases"><img src="https://img.shields.io/github/v/release/licn9901-arch/dsh-tauri?include_prereleases" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
+</p>
 
-DSH 的界面本质是"本地 HTTP 服务 + 浏览器页面"：`dsh web` 在回环地址上起一个服务，
-页面由 host 注入 `window.__DSH_BOOT__` 并提供 HTTP/WS 通道，无法静态打包成纯前端。
-所以所有桌面化方案都是**壳 + 内部启动 dsh web 进程**——本工程的 Rust 主逻辑与官方
-Electron 壳（`C:\Program Files\DeepSeek Harness\resources\app.asar` 里的
-`host-supervisor`）完全同构：
+> [!IMPORTANT]
+> 本项目由社区维护，不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
-1. `spawn(node --expose-internals <dsh>/lib/bin.js web --host 127.0.0.1 --port 0)`
-   （`--port 0` = 随机端口，避免冲突；主程序 debug/release 均为 GUI subsystem，
-   spawn 时带 `CREATE_NO_WINDOW`，node 子进程不会闪黑框）
-2. 逐行读 host stdout，等一行 `dsh web: http://127.0.0.1:<端口>` 即为就绪
-   （URL 校验规则照抄官方壳：http、回环主机、显式端口、路径为 `/`）
-3. 打开 WebView2 窗口加载该 URL（启动期间先显示 `ui/index.html` 占位页）
-4. 关闭按钮只隐藏到系统托盘；托盘显式退出时先请求进程树退出，等待 5 秒后用
-   `taskkill /T /F` 强制清理兜底
-   （`taskkill` 同样隐藏控制台窗口）
-5. host 的 stdout/stderr 经敏感字段脱敏后写入 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`，
-   按 5 MiB 轮转并保留最近 3 个文件
+## 下载与安装
 
-## 目录结构
+从 [GitHub Releases](https://github.com/licn9901-arch/dsh-tauri/releases) 下载最新的
+`DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
+`v0.1.0-preview.1` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
+
+安装包已经内置 Node.js `22.22.3` 与 `@deepseek-ai/dsh 0.1.0-rc.6`，首次启动无需联网，
+也不要求预装 Node、DSH 或 DeepSeek 官方桌面端。
+
+## 主要功能
+
+- 一键启动本地 `dsh web`，等待严格校验的回环地址后在 WebView2 中加载。
+- 单实例运行：再次启动只恢复并聚焦现有窗口，不创建第二个 Host。
+- 关闭主窗口后隐藏到系统托盘，任务继续运行；只有托盘“退出”才清理 Host。
+- Host 正常退出等待 5 秒，超时后只强制结束本应用记录的进程树。
+- 外部 HTTP/HTTPS 链接交给系统浏览器，危险 scheme 和跨源 WebView 导航被拒绝。
+- Host 页面不获得任何 Tauri capability；本地启动页使用严格 CSP。
+- 日志包含时间、级别与 PID，并进行敏感字段脱敏和 `5 MiB x 3` 轮转。
+
+## 工作方式
+
+```mermaid
+flowchart LR
+    A["Desktop shell"] -->|"spawn fixed runtime"| B["Bundled Node + dsh web"]
+    B -->|"dsh web: loopback URL"| C["Strict readiness parser"]
+    C -->|"same origin only"| D["WebView2"]
+    D -->|"external HTTP(S)"| E["System browser"]
+    A -->|"explicit quit"| F["Graceful then process-tree cleanup"]
 ```
-dsh-tauri/
-├── build.cmd            # 一键构建（检查工具链 → 生成黑色鲸鱼图标 → npm install → tauri build）
-├── dev.cmd              # 一键调试构建并运行
-├── uninstall.cmd        # 从注册表找到 NSIS 生成的卸载器并启动
-├── ui/index.html        # 启动占位页（embedded into the binary）
-├── scripts/generate-icons.ps1   # 用 Edge headless 把 whale.svg 精确渲染成 icon.png / 多尺寸 icon.ico
-├── scripts/smoke-test.ps1       # 冒烟测试：启动 exe → 等日志出现 host ready → 清理进程树
-└── src-tauri/
-    ├── tauri.conf.json  # v2 配置：无默认窗口（窗口由 Rust 代码创建）、NSIS 安装/卸载
-    ├── capabilities/default.json
-    ├── icons/whale.svg  # DeepSeek Harness 官方黑色鲸鱼 SVG 源图
-    ├── nsis/installer.nsh  # NSIS 钩子：额外创建开始菜单卸载快捷方式
-    └── src/             # 应用入口、Host supervisor、运行时、生命周期、日志与就绪解析
+
+应用执行以下命令，并让系统随机分配空闲端口：
+
+```text
+node --expose-internals <bundled-dsh>/lib/bin.js web --host 127.0.0.1 --port 0
 ```
 
-## 环境要求（首次一次性）
+就绪解析只接受以 `dsh web: ` 开头、主机为 `127.0.0.1` 或 `localhost`、带合法显式端口、
+且没有凭据、路径、查询参数或片段的 HTTP 地址。冲突的重复地址会终止启动。
 
-| 依赖 | 说明 |
+## 与上游项目的关系
+
+本仓库只维护 Tauri 桌面壳、进程生命周期、自包含运行时、日志、安全边界和 Windows 发布流程。
+它不修改 DSH Web UI，也不修改 Agent 核心能力。DSH 与其 Web 前端按
+`runtime.lock.json` 固定版本并遵循各自上游许可证。
+
+## 从源码开发
+
+环境要求：PowerShell 7、Node.js `22.22.3`、Rust `1.94.1`、MSVC C++ Build Tools 和 WebView2。
+
+```powershell
+git clone https://github.com/licn9901-arch/dsh-tauri.git
+Set-Location dsh-tauri
+npm ci
+.\dev.cmd
+```
+
+开发构建允许以下覆盖项，发布构建会忽略 Node 与 CLI 覆盖并只使用内置运行时：
+
+| 环境变量 | 用途 |
 |---|---|
-| Node.js ≥ 18 | 已有（`C:\nvm4w\nodejs`） |
-| Rust 工具链 | `https://rustup.rs` 装 rustup-init（默认选项） |
-| VS Build Tools（MSVC） | "Desktop development with C++" 工作负载，`https://visualstudio.microsoft.com/visual-cpp-build-tools/` |
-| WebView2 运行时 | Win10/11 自带（Edge 同源） |
-| Microsoft Edge | 图标生成使用 Edge headless 渲染 SVG（Win10/11 自带） |
-| 网络 | 首次构建从 crates.io 拉取 ~400 个 crate（10–30 分钟） |
+| `DSH_DESKTOP_NODE_EXECUTABLE` | 仅开发模式：指定 Node 可执行文件 |
+| `DSH_DESKTOP_CLI_ENTRY` | 仅开发模式：指定 DSH `lib/bin.js` |
+| `DSH_DESKTOP_CWD` | 指定 Host 工作目录，默认用户目录 |
+| `DSH_DESKTOP_READY_TIMEOUT_SECS` | 指定 Host 就绪超时秒数，默认 90 |
 
-## 构建与运行
+### 构建自包含安装包
 
-```bat
-build.cmd     :: 首次构建 + 打 NSIS 安装包（src-tauri\target\release\bundle\nsis\*.exe）
-dev.cmd       :: 调试构建并直接运行
+```powershell
+npm ci
+npm run build
 ```
 
-构建完成后的可执行文件：`src-tauri\target\debug\dsh-desktop.exe`（debug）/
-`src-tauri\target\release\dsh-desktop.exe`（release）。两者都已是 Windows GUI 子系统，
-启动时不会出现黑色控制台窗口；但只有 NSIS 安装包会注册卸载信息。
+构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，使用固定 `package-lock.json` 执行
+`npm ci --omit=dev`，验证 Node、DSH CLI、Web 前端、版本和许可证后才调用 Tauri 打包。
+暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
+`src-tauri/target/release/bundle/nsis`。
 
-## 安装与卸载
+已有缓存时可离线暂存：
 
-正式使用请安装 NSIS 安装包，而不是直接双击 debug/release exe：
-
-```bat
-src-tauri\target\release\bundle\nsis\DeepSeek Harness Desktop_0.1.0_x64-setup.exe
+```powershell
+pwsh -NoProfile -File .\scripts\stage-runtime.ps1 -Offline
 ```
 
-安装器默认装到 `%LOCALAPPDATA%\DeepSeek Harness Desktop`，并会：
+## 测试与质量门禁
 
-- 注册到“设置 → 应用 → 已安装的应用”，可像普通 Windows 软件一样卸载；
-- 在安装目录写入 `uninstall.exe`；
-- 在开始菜单创建应用快捷方式和 `Uninstall DeepSeek Harness Desktop` 卸载快捷方式；
-- 卸载时勾选“删除应用数据”会一并清理 `%LOCALAPPDATA%\dsh-desktop` 日志目录。
+```powershell
+npm run validate:icons
+npm run lint
+npm test
+npm audit
+Push-Location runtime-host
+npm audit --omit=dev
+Pop-Location
+npm run coverage
+npm run smoke
+```
 
-卸载方式任选其一（建议先关闭应用窗口；卸载器若检测到应用仍在运行，也会提示结束进程）：
+覆盖率门禁为 Host、运行时、生命周期、导航、日志和就绪解析核心模块行覆盖率不低于 80%；应用装配层由 Windows 冒烟覆盖。详细范围与流程见
+[测试说明](docs/testing.md)。
 
-1. Windows 设置 → 应用 → 已安装的应用 → DeepSeek Harness Desktop → 卸载；
-2. 开始菜单文件夹“DeepSeek Harness Desktop”里的 `Uninstall DeepSeek Harness Desktop`；
-3. 运行仓库根目录的 `uninstall.cmd`。
+## 日志与故障排查
 
-## 配置（环境变量，均可选）
+日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`。
 
-| 变量 | 作用 |
-|---|---|
-| `DSH_DESKTOP_NODE_EXECUTABLE` | 指定 node 可执行文件（默认：PATH 里的 node.exe） |
-| `DSH_DESKTOP_CLI_ENTRY` | 指定 dsh CLI 入口 `lib/bin.js`（默认自动探测） |
-| `DSH_DESKTOP_CWD` | host 进程工作目录（默认 `%USERPROFILE%`，与你现有 `start-dsh-web.cmd` 的 `cd /d "%USERPROFILE%"` 一致） |
-| `DSH_DESKTOP_READY_TIMEOUT_SECS` | 等待 host 就绪 URL 的超时秒数（默认 90，只影响就绪前的等待） |
+- 启动失败：查看日志中的 `level=ERROR`、Host PID 和真实退出码。
+- 窗口关闭后仍有任务：这是关闭到托盘的预期行为，请从托盘菜单重新打开或显式退出。
+- 构建提示运行时缺失或哈希不匹配：不要绕过校验，清理 `.runtime-cache` 后重新暂存。
+- 安装器显示未知发布者：首个预览版未签名，请先核对 Release 提供的 SHA-256。
 
-CLI 入口自动探测顺序：
-1. `DSH_DESKTOP_CLI_ENTRY`
-2. 应用同目录 `resources/host/...`（自包含分发时使用，见下）
-3. `C:\Program Files\DeepSeek Harness\resources\host\...`（官方桌面安装的 host，rc.5，与官方壳同款配对）
-4. 全局 npm 安装的 `dsh`（`<node目录>\node_modules\@deepseek-ai\dsh\lib\bin.js`，当前 rc.6）
+## 更新与卸载
 
-## 启动慢 / 超时排查
+首版不接入自动更新，请从 GitHub Releases 手动安装新版本。需要回滚时安装上一预览版本。
+卸载器只删除应用安装文件；即使选择删除应用数据，也只清理桌面壳的日志目录，
+不会删除 DSH 用户会话或配置。
 
-日志现在会记录实际就绪耗时：`[app] host ready: http://127.0.0.1:<端口> (started in ... ms)`。
+## 当前边界
 
-- 只要日志里已经出现 `host ready`，就说明 DSH 本身启动成功了。之前报
-  `Timed out waiting...` 是壳逻辑在就绪后仍继续 90 秒计时导致的，已修复；
-  现在导航到 host URL 后不会再触发该超时。
-- 如果 `host ready` 之前的耗时确实很长，可尝试把 `DSH_DESKTOP_CWD` 指向一个较小的实际工作目录，
-  避免默认在 `%USERPROFILE%` 下初始化。
-- 也可以显式指定全局 npm 的 dsh（rc.6）入口：
-  `DSH_DESKTOP_CLI_ENTRY=C:\nvm4w\nodejs\node_modules\@deepseek-ai\dsh\lib\bin.js`
-- 首次启动通常最慢（Node/DSH 冷启动）；同一登录会话内再次启动会快不少。
+- 仅支持 Windows x64，不支持 macOS、Linux 或 ARM64。
+- 不包含自动更新、开机自启、插件市场、手机远控或 Channels。
+- 本机已有的 `0.1.0` 原型不保证原地升级；测试预览版前请先卸载原型并保留用户数据。
 
-## 做成自包含分发（可选，发布给别人用）
+## 参与贡献
 
-当前运行依赖系统 node + 已安装的 dsh（或官方 Program Files 里的 host）。要做一个
-不依赖环境的安装包：
+请先阅读 [贡献指南](CONTRIBUTING.md) 与 [安全政策](SECURITY.md)。问题反馈请附版本、复现步骤和
+脱敏后的日志片段，不要提交 token、Cookie、密码或完整用户目录。
 
-1. 把官方 host 运行时复制进来：`robocopy "C:\Program Files\DeepSeek Harness\resources\host" src-tauri\resources\host /E`
-   （约数百 MB，含全部 `@deepseek-ai/dsh-*` 包和前端 dist）
-2. 复制一个 node：`copy C:\nvm4w\nodejs\node.exe src-tauri\resources\node\node.exe`
-3. 在 `tauri.conf.json` 的 `bundle` 里加：
-   ```json
-   "resources": ["resources/host", "resources/node/node.exe"]
-   ```
-4. 重新 `build.cmd`
+## 许可证
 
-主逻辑已经按这个布局写好探测逻辑（`resolve_cli_entry` / `resolve_node` 的顺序里 bundled
-优先）。
-
-## 已知边界（MVP 未做，后续可加）
-
-- 无托盘图标 / 无最小化到托盘（官方 Electron 版有）
-- 无单实例锁（开两个会起两个 host；host 数据按会话目录隔离，风险低）
-- 无开机自启、无自动更新
-- host 在就绪后意外崩溃会直接退出应用（MVP 行为）
-- WebView2 的 Web Notifications 支持有限（DSH 的"任务完成"等提示走页面内通知，不受影响）
-- 仅 Windows（Tauri 跨平台，但本工程未配 mac/Linux 的 host 路径与打包目标）
-
-## 与官方 Electron 版的工作量对照
-
-| 内容 | 官方 Electron 壳 | 本工程（Tauri） |
-|---|---|---|
-| 壳逻辑（spawn/就绪/清理） | host-supervisor.js | `src/main.rs`（同协议） |
-| 体积 | 安装包 ~数百 MB（含 Chromium） | 安装包 ~10–15 MB + host 运行时（自包含时数百 MB） |
-| 内存 | Chromium 整包 | 复用系统 WebView2（Edge），更省 |
-| 首次构建 | npm 装依赖 | 额外编译 ~400 个 Rust crate（10–30 分钟） |
-
-## 故障排查
-
-- 窗口停在"正在启动"：看 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log` 的 `[host]` 行
-- `tauri build` 报 linker 错误：MSVC C++ 工具链缺失，装 VS Build Tools
-- 启动即报"could not locate the dsh CLI entry"：设置 `DSH_DESKTOP_CLI_ENTRY` 指向
-  `<任意 dsh 安装>/node_modules/@deepseek-ai/dsh/lib/bin.js`
-- 打包时 `Downloading https://github.com/.../nsis-3.11.zip` 卡住或 `timeout: global`：
-  GitHub 直连不通时，用镜像手动下载并放进 tauri 缓存：
-  ```powershell
-  $nsisRoot = Join-Path $env:LOCALAPPDATA 'tauri\NSIS'
-  New-Item -ItemType Directory -Force -Path $nsisRoot | Out-Null
-  Invoke-WebRequest -Uri "https://ghfast.top/https://github.com/tauri-apps/binary-releases/releases/download/nsis-3.11/nsis-3.11.zip" `
-    -OutFile (Join-Path $nsisRoot 'nsis-3.11.zip') -TimeoutSec 90
-  Expand-Archive -Path (Join-Path $nsisRoot 'nsis-3.11.zip') -DestinationPath (Join-Path $nsisRoot 'nsis-3.11') -Force
-  ```
-  然后重跑 `npx tauri build`（下载成功时会自动重建缓存并校验哈希）。
+桌面壳代码采用 [MIT License](LICENSE)。内置 Node.js、DSH 和其他依赖的版本与许可证见
+[第三方声明](THIRD_PARTY_NOTICES.md)，构建产物同时附带机器可读的第三方许可证清单。

@@ -9,12 +9,15 @@
 ```powershell
 npm ci
 npm run validate:icons
-Push-Location src-tauri
-cargo fmt --check
-cargo clippy --all-targets -- -D warnings
-cargo test --locked
-Pop-Location
+npm run lint
+npm test
 npm audit
+Push-Location runtime-host
+npm audit --omit=dev
+Pop-Location
+npm run coverage
 ```
 
 新增 Rust 类型、方法和关键分支应提供简体中文注释。提交前检查 `git diff --check` 与 staged 文件边界，不要提交 `target`、运行时暂存文件、日志、安装包缓存或本机绝对路径。
+
+修改运行时或打包流程后还应运行 `npm run stage:runtime`、`npm run verify:runtime` 和 Windows 冒烟测试。公开发布由 `v*` 标签触发，只有 CI 全部通过才会创建 prerelease。
