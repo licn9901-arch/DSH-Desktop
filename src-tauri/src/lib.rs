@@ -13,9 +13,11 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
-use desktop::{configure_close_to_tray, create_tray, open_external_url, show_main_window};
+use desktop::{
+    configure_close_to_tray, create_tray, open_external_url, quit_application, show_main_window,
+};
 use host::HostSupervisor;
-use lifecycle::HostEvent;
+use lifecycle::{HostEvent, LifecycleAction, LifecycleStateMachine};
 use logger::{log_app, log_error, log_file_path, log_host};
 use navigation::{decide_navigation, NavigationDecision};
 use readiness::ReadinessParser;
@@ -27,7 +29,15 @@ use tauri_plugin_dialog::DialogExt;
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(
-            |app, _arguments, _cwd| {
+            |app, arguments, _cwd| {
+                if arguments
+                    .iter()
+                    .any(|argument| argument == "--quit-existing")
+                {
+                    log_app("secondary launch requested explicit exit");
+                    quit_application(app);
+                    return;
+                }
                 log_app("secondary launch requested; focusing existing window");
                 show_main_window(app);
             },
@@ -162,37 +172,22 @@ fn spawn_boot_coordinator(
 ) {
     std::thread::spawn(move || {
         let boot_started = Instant::now();
-        let ready_url = match receiver.recv_timeout(readiness_timeout) {
-            Ok(HostEvent::Ready(url)) => url,
-            Ok(HostEvent::Exited(exit_code)) => {
-                if !handle.state::<desktop::DesktopLifecycle>().is_quitting() {
-                    fail(
-                        &handle,
-                        &format!(
-                            "DeepSeek Harness exited before becoming ready (exit code: {exit_code:?})."
-                        ),
-                    );
-                }
-                return;
-            }
-            Ok(HostEvent::ProtocolError(message)) => {
-                fail(
-                    &handle,
-                    &format!("DeepSeek Harness readiness protocol error: {message}"),
-                );
-                return;
-            }
+        let mut lifecycle = LifecycleStateMachine::new();
+        let shutting_down = handle.state::<desktop::DesktopLifecycle>().is_quitting();
+        let startup_action = match receiver.recv_timeout(readiness_timeout) {
+            Ok(event) => lifecycle.on_event(event, shutting_down),
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                fail(
-                    &handle,
-                    &format!(
-                        "DeepSeek Harness did not report a URL within {} seconds. Check the host log for errors.",
-                        readiness_timeout.as_secs()
-                    ),
-                );
-                return;
+                lifecycle.on_timeout(shutting_down, readiness_timeout.as_secs())
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
+        };
+        let ready_url = match startup_action {
+            LifecycleAction::Navigate(url) => url,
+            LifecycleAction::Fail { message, .. } => {
+                fail(&handle, &message);
+                return;
+            }
+            LifecycleAction::Ignore => return,
         };
 
         log_app(&format!(
@@ -209,26 +204,13 @@ fn spawn_boot_coordinator(
         }
 
         while let Ok(event) = receiver.recv() {
-            match event {
-                HostEvent::Exited(exit_code)
-                    if !handle.state::<desktop::DesktopLifecycle>().is_quitting() =>
-                {
-                    fail(
-                        &handle,
-                        &format!(
-                            "DeepSeek Harness exited unexpectedly (exit code: {exit_code:?})."
-                        ),
-                    );
+            let shutting_down = handle.state::<desktop::DesktopLifecycle>().is_quitting();
+            match lifecycle.on_event(event, shutting_down) {
+                LifecycleAction::Fail { message, .. } => {
+                    fail(&handle, &message);
                     return;
                 }
-                HostEvent::ProtocolError(message) => {
-                    fail(
-                        &handle,
-                        &format!("DeepSeek Harness readiness protocol error: {message}"),
-                    );
-                    return;
-                }
-                HostEvent::Exited(_) | HostEvent::Ready(_) => {}
+                LifecycleAction::Ignore | LifecycleAction::Navigate(_) => {}
             }
         }
     });

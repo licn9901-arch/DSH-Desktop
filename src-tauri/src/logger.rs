@@ -123,7 +123,9 @@ fn rotated_path(path: &Path, index: usize) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
-    use super::redact_secrets;
+    use std::fs;
+
+    use super::{redact_secrets, rotate_if_needed, rotated_path, MAX_LOG_BYTES};
 
     #[test]
     fn redacts_common_secret_formats() {
@@ -134,5 +136,31 @@ mod tests {
         assert!(!redacted.contains("secret"));
         assert!(!redacted.contains("xyz"));
         assert!(redacted.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn rotates_at_five_mib_and_keeps_three_files() {
+        let directory = std::env::temp_dir().join(format!(
+            "dsh-desktop-log-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("dsh-desktop.log");
+
+        for generation in 1..=3 {
+            let file = fs::File::create(&path).unwrap();
+            file.set_len(MAX_LOG_BYTES).unwrap();
+            rotate_if_needed(&path, 1).unwrap();
+            assert!(rotated_path(&path, 1).exists(), "generation {generation}");
+        }
+
+        assert!(path.with_file_name("dsh-desktop.log.1").exists());
+        assert!(path.with_file_name("dsh-desktop.log.2").exists());
+        assert!(!path.with_file_name("dsh-desktop.log.3").exists());
+        fs::remove_dir_all(directory).unwrap();
     }
 }

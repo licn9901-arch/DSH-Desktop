@@ -7,6 +7,10 @@
     "tauri": "tauri",
     "generate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
     "validate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/validate-icons.ps1",
+    "lint": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked",
+    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --fail-under-lines 80",
+    "smoke": "pwsh -NoProfile -File scripts/smoke-test.ps1",
     "dev": "npm run validate:icons && tauri dev",
     "build": "npm run validate:icons && tauri build"
   },
