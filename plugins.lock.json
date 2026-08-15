@@ -1,0 +1,120 @@
+{
+  "schemaVersion": 1,
+  "dshVersion": "0.1.0-rc.6",
+  "sharedPackages": [
+    "@deepseek-ai/*",
+    "cordis",
+    "react",
+    "react-dom"
+  ],
+  "plugins": [
+    {
+      "package": "dsh-at-file",
+      "version": "0.6.0",
+      "bundleId": "dsh-at-file",
+      "license": "MIT",
+      "source": {
+        "type": "github-tarball",
+        "repository": "omdsh-dev/dsh-at-file",
+        "tag": "v0.6.0",
+        "tagObject": "e579d0deb2295d5fea37a89244f8d584999be850",
+        "commit": "a967aeb1df52b57609e6512b9b7bfd38b7baa092",
+        "url": "https://api.github.com/repos/omdsh-dev/dsh-at-file/tarball/v0.6.0",
+        "sha256": "7988253659d63c648f29dbee2c16cee4e2fc085baf71b6efb545219b51b62b95",
+        "archive": "dsh-at-file-v0.6.0.tar.gz"
+      },
+      "requiredFiles": [
+        "lib/index.js",
+        "lib/client.js",
+        "cordis.patch.yml",
+        "LICENSE"
+      ],
+      "permissions": [
+        "搜索工作区路径",
+        "向输入框插入相对路径引用，不读取或注入文件内容"
+      ]
+    },
+    {
+      "package": "@omdsh-dev/dsh-genui",
+      "version": "0.8.4",
+      "bundleId": "@omdsh-dev/dsh-genui",
+      "license": "MIT",
+      "source": {
+        "type": "github-tarball",
+        "repository": "omdsh-dev/dsh-genui",
+        "tag": "v0.8.4",
+        "commit": "1662a5d93b52b04f5dbb42c86483b1f53a3b33b4",
+        "url": "https://api.github.com/repos/omdsh-dev/dsh-genui/tarball/v0.8.4",
+        "sha256": "e71a110d155bca0c52f350750dd0a883b38809b562e5bb5762e224b81785b4fb",
+        "archive": "dsh-genui-v0.8.4.tar.gz"
+      },
+      "requiredFiles": [
+        "lib/index.js",
+        "lib/client.js",
+        "lib/assets/mermaid.js",
+        "lib/assets/three.js",
+        "cordis.patch.yml",
+        "SKILL.md",
+        "LICENSE"
+      ],
+      "permissions": [
+        "在回答中渲染交互式 UI、Mermaid 和 Three.js",
+        "将 GenUI action 事件作为消息回传模型"
+      ]
+    },
+    {
+      "package": "dsh-better-sidebar",
+      "version": "0.12.2",
+      "bundleId": "dsh-better-sidebar",
+      "license": "MIT",
+      "source": {
+        "type": "npm",
+        "registry": "https://registry.npmjs.org/",
+        "integrity": "sha512-b9N/Ie9d8qz/ayyf6sa+8KAqRuM3i85QLpcyu5/zWGXfB440YOVIA0r2vEFG0HVmFBO8KfLLiIgG59yo0JkK9Q=="
+      },
+      "requiredFiles": [
+        "lib/index.js",
+        "lib/client.js",
+        "cordis.patch.yml",
+        "LICENSE"
+      ],
+      "permissions": [
+        "读写工作区文件并执行 Git 操作",
+        "启动和控制本机 PTY 终端",
+        "提供网页预览；桌面托管安装默认关闭 HTTP/HTTPS 接管"
+      ]
+    },
+    {
+      "package": "@linxin666/dsh-skins",
+      "version": "0.1.16",
+      "bundleId": "@linxin666/dsh-skins",
+      "license": "Apache-2.0",
+      "source": {
+        "type": "npm",
+        "registry": "https://registry.npmjs.org/",
+        "integrity": "sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="
+      },
+      "requiredFiles": [
+        "cordis.patch.yml",
+        "skins"
+      ],
+      "permissions": [
+        "列出、试穿、应用和恢复皮肤",
+        "应用皮肤时写入 $DSH_HOME/cordis.patch.yml"
+      ]
+    }
+  ],
+  "transitivePackages": [
+    {
+      "package": "@linxin666/dsh-client-ui-skin-center",
+      "version": "0.1.16",
+      "license": "Apache-2.0",
+      "integrity": "sha512-w5C9Q08Z9AA26uiDgWbm5sYLjnaE/hELKcjsupqcXupH+85KWCQEWXHxqcL6kXK0YqdsU6wz0QwUGTT0Leykqw==",
+      "requiredFiles": [
+        "lib/index.js",
+        "lib/client.js",
+        "cordis.patch.yml"
+      ]
+    }
+  ]
+}

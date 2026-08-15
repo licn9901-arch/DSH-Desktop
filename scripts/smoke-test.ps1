@@ -30,6 +30,7 @@ New-Item -ItemType Directory -Force -Path $logDirectory, $workingDirectory | Out
 $previousEnvironment = @{
     USERPROFILE = $env:USERPROFILE
     HOME = $env:HOME
+    DSH_HOME = $env:DSH_HOME
     DSH_DESKTOP_LOG_DIR = $env:DSH_DESKTOP_LOG_DIR
     DSH_DESKTOP_NODE_EXECUTABLE = $env:DSH_DESKTOP_NODE_EXECUTABLE
     DSH_DESKTOP_CLI_ENTRY = $env:DSH_DESKTOP_CLI_ENTRY
@@ -44,6 +45,7 @@ $succeeded = $false
 try {
     $env:USERPROFILE = $smokeRoot
     $env:HOME = $smokeRoot
+    $env:DSH_HOME = Join-Path $smokeRoot '.dsh'
     $env:DSH_DESKTOP_LOG_DIR = $logDirectory
     if ($UseBundledRuntime) {
         Remove-Item Env:DSH_DESKTOP_NODE_EXECUTABLE -ErrorAction SilentlyContinue

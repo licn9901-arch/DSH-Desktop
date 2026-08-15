@@ -1,0 +1,11 @@
+{
+  "name": "dsh-desktop-managed-plugins",
+  "version": "0.1.0-preview.2",
+  "private": true,
+  "description": "Locked production dependencies for DSH Desktop managed plugins",
+  "dependencies": {
+    "@linxin666/dsh-skins": "0.1.16",
+    "dsh-better-sidebar": "0.12.2",
+    "zod": "4.4.3"
+  }
+}

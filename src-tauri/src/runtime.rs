@@ -12,6 +12,11 @@ const CLI_RELATIVE_PATH: &str = "node_modules/@deepseek-ai/dsh/lib/bin.js";
 pub struct RuntimePaths {
     pub node: PathBuf,
     pub cli_entry: PathBuf,
+    pub host_root: PathBuf,
+    pub plugins_root: PathBuf,
+    pub dsh_home: PathBuf,
+    pub web_profile: PathBuf,
+    pub managed_plugins_root: PathBuf,
     pub working_directory: PathBuf,
     pub readiness_timeout: Duration,
 }
@@ -31,6 +36,7 @@ struct RuntimeInputs {
     working_directory: Option<String>,
     user_profile: Option<String>,
     home: Option<String>,
+    dsh_home: Option<String>,
     readiness_timeout: Option<String>,
     path_directories: Vec<PathBuf>,
 }
@@ -44,6 +50,7 @@ impl RuntimeInputs {
             working_directory: non_empty_env("DSH_DESKTOP_CWD"),
             user_profile: non_empty_env("USERPROFILE"),
             home: non_empty_env("HOME"),
+            dsh_home: non_empty_env("DSH_HOME"),
             readiness_timeout: non_empty_env("DSH_DESKTOP_READY_TIMEOUT_SECS"),
             path_directories: env::var_os("PATH")
                 .map(|path| env::split_paths(&path).collect())
@@ -58,9 +65,15 @@ impl RuntimeInputs {
         allow_development_fallbacks: bool,
     ) -> Result<RuntimePaths, String> {
         let resource_dir = normalize_windows_verbatim_path(resource_dir);
+        let dsh_home = self.resolve_dsh_home();
         Ok(RuntimePaths {
             node: self.resolve_node(&resource_dir, allow_development_fallbacks)?,
             cli_entry: self.resolve_cli_entry(&resource_dir, allow_development_fallbacks)?,
+            host_root: resource_dir.join("host"),
+            plugins_root: resource_dir.join("plugins"),
+            web_profile: dsh_home.join("profiles/web"),
+            managed_plugins_root: dsh_home.join("profiles/node_modules/.dsh-desktop"),
+            dsh_home,
             working_directory: self.resolve_working_directory(),
             readiness_timeout: self.resolve_readiness_timeout(),
         })
@@ -153,6 +166,20 @@ impl RuntimeInputs {
             .or(self.home.as_ref())
             .map(PathBuf::from)
             .unwrap_or_else(|| PathBuf::from("."))
+    }
+
+    /// 解析 DSH 用户数据根目录，并与 Host 启动时注入的 `DSH_HOME` 保持一致。
+    fn resolve_dsh_home(&self) -> PathBuf {
+        self.dsh_home
+            .as_ref()
+            .map(PathBuf::from)
+            .or_else(|| {
+                self.user_profile
+                    .as_ref()
+                    .map(|home| Path::new(home).join(".dsh"))
+            })
+            .or_else(|| self.home.as_ref().map(|home| Path::new(home).join(".dsh")))
+            .unwrap_or_else(|| PathBuf::from(".dsh"))
     }
 
     /// 解析启动超时；无效或空值回退到 90 秒。
@@ -331,5 +358,42 @@ mod tests {
             .unwrap();
         assert_eq!(resolved.node, bundled_node);
         assert_eq!(resolved.cli_entry, bundled_cli);
+    }
+
+    #[test]
+    fn explicit_dsh_home_wins_and_profile_paths_are_derived_from_it() {
+        let resources = TestDirectory::new("runtime-dsh-home-resources");
+        let home = TestDirectory::new("runtime-dsh-home");
+        resources.file("node/node.exe");
+        resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+        resources.file("plugins/plugins.lock.json");
+
+        let inputs = RuntimeInputs {
+            dsh_home: Some(home.path().display().to_string()),
+            user_profile: Some("ignored-user-profile".to_owned()),
+            ..Default::default()
+        };
+        let resolved = inputs.resolve(resources.path(), false).unwrap();
+        assert_eq!(resolved.dsh_home, home.path());
+        assert_eq!(resolved.web_profile, home.path().join("profiles/web"));
+        assert_eq!(resolved.host_root, resources.path().join("host"));
+        assert_eq!(resolved.plugins_root, resources.path().join("plugins"));
+    }
+
+    #[test]
+    fn default_dsh_home_uses_user_profile_dot_dsh() {
+        let resources = TestDirectory::new("runtime-default-dsh-home-resources");
+        let user = TestDirectory::new("runtime-default-dsh-home-user");
+        resources.file("node/node.exe");
+        resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+        resources.file("plugins/plugins.lock.json");
+
+        let resolved = RuntimeInputs {
+            user_profile: Some(user.path().display().to_string()),
+            ..Default::default()
+        }
+        .resolve(resources.path(), false)
+        .unwrap();
+        assert_eq!(resolved.dsh_home, user.path().join(".dsh"));
     }
 }

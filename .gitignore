@@ -4,6 +4,7 @@ src-tauri/gen/
 src-tauri/resources/
 .runtime-cache/
 .deploy-artifacts/
+.tools/
 *.log
 .env
 .env.*

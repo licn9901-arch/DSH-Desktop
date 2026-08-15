@@ -19,6 +19,13 @@ pub struct HostSupervisor {
     child: Mutex<Option<Box<dyn ManagedChild>>>,
 }
 
+impl Default for HostSupervisor {
+    /// 创建空 supervisor，Host 由启动协调流程显式挂载。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// 抽象可管理子进程，使 supervisor 单元测试不依赖真实 Node 或 DSH。
 pub trait ManagedChild: Send {
     /// 返回操作系统进程 ID。
@@ -65,8 +72,26 @@ impl ProcessTreeTerminator for WindowsProcessTreeTerminator {
 }
 
 impl HostSupervisor {
+    /// 创建尚未持有进程的 supervisor，允许插件失败后复用同一应用状态重启核心 Host。
+    pub fn new() -> Self {
+        Self {
+            child: Mutex::new(None),
+        }
+    }
+
     /// 启动 DSH Web Host，并返回可分别消费的 stdout 与 stderr。
     pub fn spawn(paths: &RuntimePaths) -> Result<(Self, ChildStdout, ChildStderr), String> {
+        let supervisor = Self::new();
+        let (stdout, stderr) = supervisor.start(paths)?;
+        Ok((supervisor, stdout, stderr))
+    }
+
+    /// 在当前 supervisor 中启动唯一 Host；已持有进程时拒绝重复启动。
+    pub fn start(&self, paths: &RuntimePaths) -> Result<(ChildStdout, ChildStderr), String> {
+        let mut guard = self.child.lock().unwrap_or_else(|error| error.into_inner());
+        if guard.is_some() {
+            return Err("host is already running".to_owned());
+        }
         log_app(&format!(
             "spawning: {} --expose-internals {} web --host 127.0.0.1 --port 0 (cwd: {})",
             paths.node.display(),
@@ -80,6 +105,7 @@ impl HostSupervisor {
             .arg(&paths.cli_entry)
             .args(["web", "--host", "127.0.0.1", "--port", "0"])
             .current_dir(&paths.working_directory)
+            .env("DSH_HOME", &paths.dsh_home)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         hide_console_window(&mut command);
@@ -96,14 +122,8 @@ impl HostSupervisor {
             .take()
             .ok_or_else(|| "host stderr is not available".to_owned())?;
         log_app(&format!("host started: pid={}", child.id()));
-
-        Ok((
-            Self {
-                child: Mutex::new(Some(Box::new(child))),
-            },
-            stdout,
-            stderr,
-        ))
+        *guard = Some(Box::new(child));
+        Ok((stdout, stderr))
     }
 
     /// 非阻塞读取 Host 退出码；外层 `None` 表示仍在运行，内层 `None` 表示无可用退出码。
@@ -273,6 +293,11 @@ mod tests {
         let paths = RuntimePaths {
             node: std::env::temp_dir().join("dsh-desktop-node-does-not-exist.exe"),
             cli_entry: std::env::temp_dir().join("fake-host.js"),
+            host_root: std::env::temp_dir(),
+            plugins_root: std::env::temp_dir(),
+            dsh_home: std::env::temp_dir(),
+            web_profile: std::env::temp_dir(),
+            managed_plugins_root: std::env::temp_dir(),
             working_directory: std::env::temp_dir(),
             readiness_timeout: Duration::from_secs(1),
         };

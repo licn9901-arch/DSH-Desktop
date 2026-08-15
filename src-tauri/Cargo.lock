@@ -827,10 +827,13 @@ dependencies = [
 
 [[package]]
 name = "dsh-desktop"
-version = "0.1.0-preview.1"
+version = "0.1.0-preview.2"
 dependencies = [
  "chrono",
  "regex",
+ "serde",
+ "serde_json",
+ "sha2",
  "tauri",
  "tauri-build",
  "tauri-plugin-dialog",
