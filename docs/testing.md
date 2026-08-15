@@ -12,7 +12,7 @@ npm run coverage
 npm run smoke
 ```
 
-`npm run coverage` 需要先安装 `llvm-tools-preview` 和 `cargo-llvm-cov`，并通过 `--fail-under-lines 80` 强制 Host、运行时、生命周期、导航、日志和就绪解析核心模块的行覆盖率不低于 80%。应用装配层 `desktop.rs`、`lib.rs`、`main.rs` 由 Windows 冒烟测试覆盖，不计入核心模块行覆盖率。GitHub Actions 会安装并执行两类门禁。
+`npm run coverage` 需要先安装 `llvm-tools-preview` 和 `cargo-llvm-cov`，并通过 `--fail-under-lines 80` 强制 Host、运行时、生命周期、导航、日志和就绪解析核心模块的行覆盖率不低于 80%。应用装配层 `desktop.rs`、`lib.rs`、`main.rs` 由 Windows 冒烟测试覆盖，不计入核心模块行覆盖率。发布前必须在本机完成两类门禁。
 
 自包含 release 和安装器验证使用：
 
@@ -40,4 +40,4 @@ Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 
 脚本失败兜底只终止本次记录的桌面 PID 与 Host PID，禁止扫描或批量终止其他 `node.exe`。
 
-CI 先用 fake Host 验证可注入 supervisor，再安装 NSIS 包并用内置 Node/DSH 重跑同一套生命周期检查。卸载检查只验证本应用安装目录被移除，不触碰 DSH 用户会话与配置。
+发布验证先用 fake Host 检查可注入 supervisor，再安装 NSIS 包并用内置 Node/DSH 重跑同一套生命周期检查。卸载检查只验证本应用安装目录被移除，不触碰 DSH 用户会话与配置。

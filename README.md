@@ -9,8 +9,9 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/licn9901-arch/dsh-tauri/actions/workflows/ci.yml"><img src="https://github.com/licn9901-arch/dsh-tauri/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="https://github.com/licn9901-arch/dsh-tauri/releases"><img src="https://img.shields.io/github/v/release/licn9901-arch/dsh-tauri?include_prereleases" alt="Release"></a>
+  <a href="https://dsh.cubee.chat/">官网</a> ·
+  <a href="https://github.com/licn9901-arch/DSH-Desktop/releases">下载</a> ·
+  <a href="https://github.com/licn9901-arch/DSH-Desktop/releases"><img src="https://img.shields.io/github/v/release/licn9901-arch/DSH-Desktop?include_prereleases" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT License"></a>
 </p>
 
@@ -19,7 +20,9 @@
 
 ## 下载与安装
 
-从 [GitHub Releases](https://github.com/licn9901-arch/dsh-tauri/releases) 下载最新的
+项目官网：[https://dsh.cubee.chat/](https://dsh.cubee.chat/)
+
+从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
 `v0.1.0-preview.1` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
@@ -69,8 +72,8 @@ node --expose-internals <bundled-dsh>/lib/bin.js web --host 127.0.0.1 --port 0
 环境要求：PowerShell 7、Node.js `22.22.3`、Rust `1.94.1`、MSVC C++ Build Tools 和 WebView2。
 
 ```powershell
-git clone https://github.com/licn9901-arch/dsh-tauri.git
-Set-Location dsh-tauri
+git clone https://github.com/licn9901-arch/DSH-Desktop.git
+Set-Location DSH-Desktop
 npm ci
 .\dev.cmd
 ```

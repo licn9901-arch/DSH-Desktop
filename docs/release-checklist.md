@@ -21,3 +21,4 @@
 - [ ] Release 标记为 prerelease，并明确社区非官方、Windows x64、内置版本和未签名提示。
 - [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动和任务测试。
 - [ ] 安装、升级、回滚和卸载均不删除 DSH 用户会话与配置。
+- [ ] 本机全部门禁通过后再创建 Git 标签和 GitHub prerelease，不依赖 GitHub Actions。
