@@ -11,10 +11,28 @@ pub enum NavigationDecision {
     Deny,
 }
 
+/// 判断目标是否为 Tauri 在启动阶段加载的内置资源地址。
+///
+/// Windows WebView2 会把 `WebviewUrl::App` 映射成 `http://tauri.localhost`，
+/// 其他平台或运行模式则可能使用 `tauri://localhost`。这里只允许 Tauri
+/// 自身使用的精确主机名，避免相似域名或带自定义端口的地址进入启动白名单。
+fn is_tauri_startup_url(target: &url::Url) -> bool {
+    let valid_origin = matches!(
+        (target.scheme(), target.host_str()),
+        ("tauri", Some("localhost"))
+            | ("http", Some("tauri.localhost"))
+            | ("https", Some("tauri.localhost"))
+    );
+
+    valid_origin
+        && target.port().is_none()
+        && target.username().is_empty()
+        && target.password().is_none()
+}
+
 /// 根据当前 Host 原点判断目标地址如何处理。
 pub fn decide_navigation(host_origin: Option<&url::Url>, target: &url::Url) -> NavigationDecision {
-    if host_origin.is_none() && target.scheme() == "tauri" && target.host_str() == Some("localhost")
-    {
+    if host_origin.is_none() && is_tauri_startup_url(target) {
         return NavigationDecision::Allow;
     }
 
@@ -49,8 +67,28 @@ mod tests {
             NavigationDecision::Allow
         );
         assert_eq!(
+            decide_navigation(None, &url("http://tauri.localhost/")),
+            NavigationDecision::Allow
+        );
+        assert_eq!(
+            decide_navigation(None, &url("https://tauri.localhost/index.html")),
+            NavigationDecision::Allow
+        );
+        assert_eq!(
             decide_navigation(Some(&origin), &url("http://127.0.0.1:43123/tasks/1")),
             NavigationDecision::Allow
+        );
+    }
+
+    #[test]
+    fn rejects_urls_that_only_resemble_the_tauri_start_page() {
+        assert_eq!(
+            decide_navigation(None, &url("http://tauri.localhost.example.com/")),
+            NavigationDecision::OpenExternal
+        );
+        assert_eq!(
+            decide_navigation(None, &url("http://tauri.localhost:43123/")),
+            NavigationDecision::OpenExternal
         );
     }
 
