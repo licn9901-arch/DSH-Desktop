@@ -18,9 +18,11 @@ Electron 壳（`C:\Program Files\DeepSeek Harness\resources\app.asar` 里的
 2. 逐行读 host stdout，等一行 `dsh web: http://127.0.0.1:<端口>` 即为就绪
    （URL 校验规则照抄官方壳：http、回环主机、显式端口、路径为 `/`）
 3. 打开 WebView2 窗口加载该 URL（启动期间先显示 `ui/index.html` 占位页）
-4. 窗口关闭 / 异常退出时，先 `taskkill /T` 温和关闭进程树，1.2s 后强杀兜底
+4. 关闭按钮只隐藏到系统托盘；托盘显式退出时先请求进程树退出，等待 5 秒后用
+   `taskkill /T /F` 强制清理兜底
    （`taskkill` 同样隐藏控制台窗口）
-5. host 的 stdout/stderr 全部追加到 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`
+5. host 的 stdout/stderr 经敏感字段脱敏后写入 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`，
+   按 5 MiB 轮转并保留最近 3 个文件
 
 ## 目录结构
 

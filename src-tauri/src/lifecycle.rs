@@ -6,7 +6,9 @@ pub enum HostEvent {
     /// Host 已输出可加载的回环地址。
     Ready(String),
     /// Host 进程已经结束。
-    Exited,
+    Exited(Option<i32>),
+    /// Host 输出了互相冲突的就绪地址。
+    ProtocolError(String),
 }
 
 /// 应用触发清理流程的原因。
