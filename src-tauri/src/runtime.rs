@@ -113,13 +113,13 @@ impl RuntimeInputs {
                 return Ok(PathBuf::from(value));
             }
         }
-        let bundled = resource_dir.join("node/node.exe");
+        let bundled = resource_dir.join("node").join(node_executable_name());
         if bundled.is_file() {
             return Ok(bundled);
         }
         if allow_development_fallbacks {
             return Ok(self
-                .find_in_path("node.exe")
+                .find_in_path(node_executable_name())
                 .unwrap_or_else(|| PathBuf::from("node")));
         }
         Err(format!(
@@ -159,7 +159,7 @@ impl RuntimeInputs {
                 PathBuf::from(r"C:\Program Files\DeepSeek Harness\resources\host")
                     .join(CLI_RELATIVE_PATH),
             ];
-        if let Some(node) = self.find_in_path("node.exe") {
+        if let Some(node) = self.find_in_path(node_executable_name()) {
             if let Some(directory) = node.parent() {
                 candidates.push(directory.join(CLI_RELATIVE_PATH));
             }
@@ -223,6 +223,15 @@ impl RuntimeInputs {
     }
 }
 
+/// 返回当前平台的 Node 可执行文件名。
+fn node_executable_name() -> &'static str {
+    if cfg!(windows) {
+        "node.exe"
+    } else {
+        "node"
+    }
+}
+
 /// 将 Windows verbatim 路径转为普通 Win32 路径，避免 Node 把 CLI 参数误解析为盘符。
 fn normalize_windows_verbatim_path(path: &Path) -> PathBuf {
     #[cfg(windows)]
@@ -252,7 +261,9 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{RuntimeInputs, CLI_RELATIVE_PATH, DEFAULT_READINESS_TIMEOUT};
+    use super::{
+        node_executable_name, RuntimeInputs, CLI_RELATIVE_PATH, DEFAULT_READINESS_TIMEOUT,
+    };
 
     struct TestDirectory(PathBuf);
 
@@ -292,9 +303,9 @@ mod tests {
     fn bundled_runtime_has_priority_over_path() {
         let resources = TestDirectory::new("runtime-bundled");
         let path_runtime = TestDirectory::new("runtime-path");
-        let bundled_node = resources.file("node/node.exe");
+        let bundled_node = resources.file(&format!("node/{}", node_executable_name()));
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
-        path_runtime.file("node.exe");
+        path_runtime.file(node_executable_name());
         path_runtime.file(CLI_RELATIVE_PATH);
 
         let inputs = RuntimeInputs {
@@ -364,7 +375,7 @@ mod tests {
         };
         assert!(inputs.resolve(resources.path(), false).is_err());
 
-        let bundled_node = resources.file("node/node.exe");
+        let bundled_node = resources.file(&format!("node/{}", node_executable_name()));
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         let resolved = inputs.resolve(resources.path(), false).unwrap();
         assert_eq!(resolved.node, bundled_node);
@@ -391,7 +402,7 @@ mod tests {
     fn explicit_dsh_home_wins_and_profile_paths_are_derived_from_it() {
         let resources = TestDirectory::new("runtime-dsh-home-resources");
         let home = TestDirectory::new("runtime-dsh-home");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{}", node_executable_name()));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         resources.file("plugins/plugins.lock.json");
 
@@ -419,7 +430,7 @@ mod tests {
     fn default_dsh_home_uses_user_profile_dot_dsh() {
         let resources = TestDirectory::new("runtime-default-dsh-home-resources");
         let user = TestDirectory::new("runtime-default-dsh-home-user");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{}", node_executable_name()));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         resources.file("plugins/plugins.lock.json");
 

@@ -7,6 +7,8 @@ use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -67,15 +69,15 @@ trait ProcessTreeTerminator {
     fn force(&self, pid: u32) -> Result<(), String>;
 }
 
-struct WindowsProcessTreeTerminator;
+struct PlatformProcessTreeTerminator;
 
-impl ProcessTreeTerminator for WindowsProcessTreeTerminator {
+impl ProcessTreeTerminator for PlatformProcessTreeTerminator {
     fn request(&self, pid: u32) -> Result<(), String> {
-        run_taskkill(pid, false)
+        terminate_process_tree(pid, false)
     }
 
     fn force(&self, pid: u32) -> Result<(), String> {
-        run_taskkill(pid, true)
+        terminate_process_tree(pid, true)
     }
 }
 
@@ -124,6 +126,8 @@ impl HostSupervisor {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         hide_console_window(&mut command);
+        #[cfg(unix)]
+        command.process_group(0);
 
         let mut child = command
             .spawn()
@@ -169,7 +173,7 @@ impl HostSupervisor {
     /// 终止 Host 进程树并回收子进程；重复调用不会产生额外副作用。
     pub fn shutdown(&self) {
         self.shutdown_with(
-            &WindowsProcessTreeTerminator,
+            &PlatformProcessTreeTerminator,
             Duration::from_secs(5),
             Duration::from_millis(100),
         );
@@ -254,7 +258,8 @@ fn build_host_path(paths: &RuntimePaths, inherited: Option<&OsStr>) -> Result<Os
 }
 
 /// 调用 Windows `taskkill` 处理指定 PID 的完整进程树，并保留失败诊断。
-fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
+#[cfg(windows)]
+fn terminate_process_tree(pid: u32, force: bool) -> Result<(), String> {
     let pid_text = pid.to_string();
     let mut killer = Command::new("taskkill");
     killer.args(["/PID", &pid_text, "/T"]);
@@ -281,6 +286,26 @@ fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
         },
         stderr
     ))
+}
+
+/// macOS/Linux 上向 Host 的进程组发送信号；Host 启动时已成为独立进程组。
+#[cfg(unix)]
+fn terminate_process_tree(pid: u32, force: bool) -> Result<(), String> {
+    let signal = if force { "-KILL" } else { "-TERM" };
+    let group = format!("-{pid}");
+    let output = Command::new("kill")
+        .args([signal, "--", &group])
+        .output()
+        .map_err(|error| format!("failed to start kill: {error}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "kill exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr).trim()
+        ))
+    }
 }
 
 /// 防止 Windows GUI 应用启动控制台子进程时弹出黑色窗口。
@@ -444,14 +469,13 @@ mod tests {
 
     #[test]
     fn host_path_prefers_bundled_node_and_pnpm_before_inherited_path() {
+        let root = std::env::temp_dir().join("dsh-desktop-host-path");
         let paths = RuntimePaths {
-            node: std::path::PathBuf::from(r"C:\app\node\node.exe"),
-            cli_entry: std::path::PathBuf::from(
-                r"C:\app\host\node_modules\@deepseek-ai\dsh\lib\bin.js",
-            ),
-            host_root: std::path::PathBuf::from(r"C:\app\host"),
-            tool_bin_directory: std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
-            desktop_policy_patch: std::path::PathBuf::from(r"C:\app\policy\dsh-market.patch.yml"),
+            node: root.join("node/node"),
+            cli_entry: root.join("host/node_modules/@deepseek-ai/dsh/lib/bin.js"),
+            host_root: root.join("host"),
+            tool_bin_directory: root.join("host/node_modules/.bin"),
+            desktop_policy_patch: root.join("policy/dsh-market.patch.yml"),
             plugins_root: std::env::temp_dir(),
             user_home: std::env::temp_dir(),
             dsh_home: std::env::temp_dir(),
@@ -460,21 +484,19 @@ mod tests {
             working_directory: std::env::temp_dir(),
             readiness_timeout: Duration::from_secs(1),
         };
-        let inherited = std::env::join_paths([
-            std::path::Path::new(r"C:\Windows\System32"),
-            std::path::Path::new(r"C:\tools"),
-        ])
-        .unwrap();
+        let system = root.join("system");
+        let tools = root.join("tools");
+        let inherited = std::env::join_paths([&system, &tools]).unwrap();
 
         let actual = build_host_path(&paths, Some(&inherited)).unwrap();
         let directories = std::env::split_paths(&actual).collect::<Vec<_>>();
         assert_eq!(
             directories,
             vec![
-                std::path::PathBuf::from(r"C:\app\node"),
-                std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
-                std::path::PathBuf::from(r"C:\Windows\System32"),
-                std::path::PathBuf::from(r"C:\tools")
+                root.join("node"),
+                root.join("host/node_modules/.bin"),
+                system,
+                tools
             ]
         );
     }

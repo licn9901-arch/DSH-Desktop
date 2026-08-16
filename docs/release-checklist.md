@@ -25,7 +25,10 @@
 ## 发布产物
 
 - [ ] NSIS 安装包、`.sha256`、`third-party-licenses.json`、第三方声明和构建摘要齐全。
+- [ ] macOS 对应架构 DMG、SHA-256、第三方声明齐全，内置 Node 与 PTY 架构匹配。
 - [ ] Release 标记为 prerelease，并明确社区非官方、Windows x64、内置版本和未签名提示。
 - [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动和任务测试。
+- [ ] 对应架构 macOS 12+ 完成 DMG 安装、离线首次启动、托盘重启、外链和显式退出测试。
+- [ ] 未签名/未公证的 macOS 预览包明确标注 Gatekeeper 提示，不宣称已签名或公证。
 - [ ] 安装、升级、回滚和卸载均不删除 DSH 用户会话与配置。
 - [ ] 本机全部门禁通过后再创建 Git 标签和 GitHub prerelease，不依赖 GitHub Actions。
