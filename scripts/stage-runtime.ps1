@@ -7,10 +7,12 @@ $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 $lockPath = Join-Path $projectRoot 'runtime.lock.json'
 $runtimeHostRoot = Join-Path $projectRoot 'runtime-host'
+$policySourcePath = Join-Path $projectRoot 'runtime-policy\dsh-market.patch.yml'
 $cacheRoot = Join-Path $projectRoot '.runtime-cache'
 $resourceRoot = Join-Path $projectRoot 'src-tauri\resources'
 $nodeResourceRoot = Join-Path $resourceRoot 'node'
 $hostResourceRoot = Join-Path $resourceRoot 'host'
+$policyResourceRoot = Join-Path $resourceRoot 'policy'
 $npmCache = Join-Path $cacheRoot 'npm-cache'
 
 # 删除或覆盖前验证目标仍位于仓库根目录，防止变量异常扩大影响范围。
@@ -27,6 +29,9 @@ function Assert-ProjectPath {
 
 if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
     throw "Runtime lock file is missing: $lockPath"
+}
+if (-not (Test-Path -LiteralPath $policySourcePath -PathType Leaf)) {
+    throw "Desktop policy patch is missing: $policySourcePath"
 }
 $runtimeLock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
 if ($runtimeLock.schemaVersion -ne 1) {
@@ -63,7 +68,8 @@ foreach ($required in @('node.exe', 'LICENSE')) {
 
 $nodeResourceRoot = Assert-ProjectPath $nodeResourceRoot
 $hostResourceRoot = Assert-ProjectPath $hostResourceRoot
-foreach ($target in @($nodeResourceRoot, $hostResourceRoot)) {
+$policyResourceRoot = Assert-ProjectPath $policyResourceRoot
+foreach ($target in @($nodeResourceRoot, $hostResourceRoot, $policyResourceRoot)) {
     if (Test-Path -LiteralPath $target) {
         Remove-Item -LiteralPath $target -Recurse -Force
     }
@@ -72,11 +78,12 @@ foreach ($target in @($nodeResourceRoot, $hostResourceRoot)) {
 Copy-Item -LiteralPath (Join-Path $nodeDistributionRoot 'node.exe') -Destination $nodeResourceRoot
 Copy-Item -LiteralPath (Join-Path $nodeDistributionRoot 'LICENSE') -Destination $nodeResourceRoot
 Copy-Item -LiteralPath $lockPath -Destination (Join-Path $nodeResourceRoot 'runtime.lock.json')
+Copy-Item -LiteralPath $policySourcePath -Destination (Join-Path $policyResourceRoot 'dsh-market.patch.yml')
 
 Copy-Item -LiteralPath (Join-Path $runtimeHostRoot 'package.json') -Destination $hostResourceRoot
 Copy-Item -LiteralPath (Join-Path $runtimeHostRoot 'package-lock.json') -Destination $hostResourceRoot
 
-Write-Host "Installing $($runtimeLock.dsh.package) $($runtimeLock.dsh.version) with npm ci..."
+Write-Host "Installing DSH $($runtimeLock.dsh.version), Market $($runtimeLock.market.version), and pnpm $($runtimeLock.pnpm.version) with npm ci..."
 Push-Location $hostResourceRoot
 try {
     $npmArguments = @('ci', '--omit=dev', '--no-audit', '--fund=false', '--cache', $npmCache)

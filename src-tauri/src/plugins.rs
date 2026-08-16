@@ -18,6 +18,9 @@ use crate::runtime::RuntimePaths;
 const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 const BASE_BUNDLE: &str = "@deepseek-ai/dsh-base";
 const WEB_APP_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
+const MARKET_BUNDLE: &str = "dshmarket";
+const MARKET_RUNTIME_ALIAS: &str = "dshmarket-desktop";
+const DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/theme-settings";
 const LEGACY_SIDE_PANEL: &str = "@dsh-external/dsh-side-panel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -32,6 +35,8 @@ pub struct PluginLock {
     pub shared_packages: Vec<String>,
     #[serde(default)]
     pub transitive_packages: Vec<ManagedDependency>,
+    #[serde(default)]
+    pub skills: Vec<ManagedSkill>,
 }
 
 /// 描述一个固定版本插件及运行前必须存在的文件。
@@ -59,6 +64,19 @@ pub enum PluginSource {
         commit: String,
         sha256: String,
     },
+    /// 仓库自有预构建 bundle，只允许从仓库内相对目录暂存。
+    Local { path: String },
+}
+
+/// 描述从锁定插件发布物复制到 DSH 用户级目录的托管 Skill。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkill {
+    pub name: String,
+    pub source_package: String,
+    pub source_file: String,
+    pub version: String,
+    pub sha256: String,
 }
 
 /// 描述需要与主插件一起建立 profile junction、但不直接激活 bundle 的依赖。
@@ -82,7 +100,28 @@ pub struct PluginInstallState {
     #[serde(default)]
     pub managed: BTreeMap<String, ManagedPluginState>,
     #[serde(default)]
+    pub managed_skills: BTreeMap<String, ManagedSkillState>,
+    #[serde(default)]
     pub sidebar_defaults_seeded: bool,
+}
+
+/// 记录托管 Skill 上次成功写入的摘要，并记住用户主动删除的选择。
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedSkillState {
+    pub version: String,
+    pub content_sha256: String,
+    #[serde(default)]
+    pub user_removed: bool,
+}
+
+/// 托管 Skill 的纯规划结果，文件写入仍由插件事务执行。
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ManagedSkillAction {
+    Write(ManagedSkillState),
+    KeepManaged(ManagedSkillState),
+    PreserveUnmanaged,
+    RememberRemoved(ManagedSkillState),
 }
 
 /// 记录单个桌面托管插件上次成功安装的状态。
@@ -123,6 +162,8 @@ pub struct PluginManager {
     dsh_home: PathBuf,
     web_profile: PathBuf,
     managed_plugins_root: PathBuf,
+    market_root: PathBuf,
+    user_home: PathBuf,
     linker: Arc<dyn DirectoryLinker>,
 }
 
@@ -157,6 +198,8 @@ impl PluginManager {
             paths.dsh_home.clone(),
             paths.web_profile.clone(),
             paths.managed_plugins_root.clone(),
+            paths.host_root.join("node_modules/dshmarket"),
+            paths.user_home.clone(),
             Arc::new(SystemDirectoryLinker {
                 node: paths.node.clone(),
             }),
@@ -169,6 +212,8 @@ impl PluginManager {
         dsh_home: PathBuf,
         web_profile: PathBuf,
         managed_plugins_root: PathBuf,
+        market_root: PathBuf,
+        user_home: PathBuf,
         linker: Arc<dyn DirectoryLinker>,
     ) -> Self {
         Self {
@@ -176,12 +221,16 @@ impl PluginManager {
             dsh_home,
             web_profile,
             managed_plugins_root,
+            market_root,
+            user_home,
             linker,
         }
     }
 
     /// 校验资源并准备 profile；任何中途错误都必须保持原状态。
     pub fn prepare(&self) -> Result<PluginTransaction, String> {
+        // Market 属于桌面运行时层，必须先于可回滚的四个托管插件持久化。
+        self.ensure_builtin_market()?;
         let lock_path = self.resources.join("plugins.lock.json");
         let lock_bytes = fs::read(&lock_path)
             .map_err(|error| format!("failed to read {}: {error}", lock_path.display()))?;
@@ -300,6 +349,68 @@ impl PluginManager {
                     atomic_write(&patch_path, b"[]\n")?;
                 }
             }
+
+            for skill in &lock.skills {
+                let source = store_modules
+                    .join(package_relative_path(&skill.source_package)?)
+                    .join(&skill.source_file);
+                let content = fs::read(&source).map_err(|error| {
+                    format!("failed to read managed skill {}: {error}", source.display())
+                })?;
+                let source_digest = sha256_hex(&content);
+                let target = self
+                    .dsh_home
+                    .join("skills")
+                    .join(&skill.name)
+                    .join("SKILL.md");
+                let current_digest = read_optional_bytes(&target)?.as_deref().map(sha256_hex);
+                match plan_managed_skill(
+                    skill,
+                    state.managed_skills.get(&skill.name),
+                    current_digest.as_deref(),
+                    &source_digest,
+                )? {
+                    ManagedSkillAction::Write(next) => {
+                        transaction.snapshots.push(FileSnapshot::capture(&target)?);
+                        atomic_write(&target, &content)?;
+                        transaction
+                            .next_state
+                            .managed_skills
+                            .insert(skill.name.clone(), next);
+                    }
+                    ManagedSkillAction::RememberRemoved(next) => {
+                        transaction
+                            .next_state
+                            .managed_skills
+                            .insert(skill.name.clone(), next);
+                    }
+                    ManagedSkillAction::KeepManaged(next) => {
+                        transaction
+                            .next_state
+                            .managed_skills
+                            .insert(skill.name.clone(), next);
+                    }
+                    ManagedSkillAction::PreserveUnmanaged => {}
+                }
+            }
+
+            // Hindsight 的配置目录不遵循 DSH_HOME；仅在桌面托管该插件且文件不存在时写入隐私关闭默认值。
+            if transaction
+                .next_state
+                .managed
+                .contains_key("@vectorize-io/hindsight-coding-agents")
+            {
+                let config_path = self.user_home.join(".hindsight/coding-agent.json");
+                if !config_path.exists() {
+                    transaction
+                        .snapshots
+                        .push(FileSnapshot::capture(&config_path)?);
+                    atomic_write(
+                        &config_path,
+                        b"{\n  \"harnesses\": {\n    \"dsh\": {\n      \"optInOnly\": true,\n      \"optInPaths\": []\n    }\n  }\n}\n",
+                    )?;
+                }
+            }
             Ok(())
         })();
 
@@ -311,6 +422,56 @@ impl PluginManager {
             });
         }
         Ok(transaction)
+    }
+
+    /// 将内置 Market bundle 非破坏性写入 web profile，并保留用户依赖与未知 bundle。
+    fn ensure_builtin_market(&self) -> Result<(), String> {
+        self.ensure_market_runtime_alias()?;
+        let profile_path = self.web_profile.join("package.json");
+        let mut profile = read_profile(&profile_path)?;
+        let original = profile.clone();
+        insert_builtin_market(&mut profile)?;
+        if profile == original {
+            return Ok(());
+        }
+        if profile_path.is_file() {
+            persist_profile_backup(&self.dsh_home, &profile_path)?;
+        }
+        atomic_write_json(&profile_path, &profile)
+    }
+
+    /// 将桌面私有模块别名指向安装根 Market，避免用户同名依赖覆盖活动版本。
+    fn ensure_market_runtime_alias(&self) -> Result<(), String> {
+        if !self.market_root.join("package.json").is_file() {
+            return Err(format!(
+                "bundled Market package is missing: {}",
+                self.market_root.display()
+            ));
+        }
+        let alias = self
+            .dsh_home
+            .join("profiles/node_modules")
+            .join(MARKET_RUNTIME_ALIAS);
+        let expected =
+            fs::canonicalize(&self.market_root).unwrap_or_else(|_| self.market_root.clone());
+        let current = self.linker.target(&alias)?;
+        if current.as_ref().is_some_and(|target| target == &expected) {
+            return Ok(());
+        }
+        if alias.exists() && current.is_none() {
+            return Err(format!(
+                "desktop Market runtime alias is occupied by a regular directory: {}",
+                alias.display()
+            ));
+        }
+        if current.is_some() {
+            self.linker.remove(&alias)?;
+        }
+        if let Some(parent) = alias.parent() {
+            fs::create_dir_all(parent)
+                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
+        }
+        self.linker.create(&alias, &expected)
     }
 }
 
@@ -465,6 +626,20 @@ fn validate_plugin_tree(node_modules: &Path, lock: &PluginLock) -> Result<(), St
                     dependency.package
                 ));
             }
+        }
+    }
+    for skill in &lock.skills {
+        let source = node_modules
+            .join(package_relative_path(&skill.source_package)?)
+            .join(&skill.source_file);
+        let bytes = fs::read(&source)
+            .map_err(|error| format!("managed skill {} source is missing: {error}", skill.name))?;
+        let actual = sha256_hex(&bytes);
+        if actual != skill.sha256 {
+            return Err(format!(
+                "managed skill {} SHA-256 mismatch: expected {}, got {actual}",
+                skill.name, skill.sha256
+            ));
         }
     }
     Ok(())
@@ -862,7 +1037,75 @@ impl PluginLock {
                 })?;
             }
         }
+        let plugin_packages = lock
+            .plugins
+            .iter()
+            .map(|plugin| plugin.package.as_str())
+            .collect::<BTreeSet<_>>();
+        let mut skill_names = BTreeSet::new();
+        for skill in &lock.skills {
+            validate_package_name(&skill.source_package)?;
+            validate_relative_path(&skill.source_file)?;
+            validate_package_name(&skill.name)?;
+            if skill.name.starts_with('@') || skill.name.contains('/') || skill.name.contains('\\')
+            {
+                return Err(format!(
+                    "managed skill {} must use one directory name",
+                    skill.name
+                ));
+            }
+            if skill.version.trim().is_empty() || !is_lower_hex(&skill.sha256, 64) {
+                return Err(format!(
+                    "managed skill {} has incomplete metadata",
+                    skill.name
+                ));
+            }
+            if !plugin_packages.contains(skill.source_package.as_str()) {
+                return Err(format!(
+                    "managed skill {} references an unlocked source package",
+                    skill.name
+                ));
+            }
+            if !skill_names.insert(skill.name.clone()) {
+                return Err(format!("duplicate managed skill: {}", skill.name));
+            }
+        }
         Ok(lock)
+    }
+}
+
+/// 根据 marker 和当前文件摘要决定是否写入、让渡或记住用户删除。
+fn plan_managed_skill(
+    skill: &ManagedSkill,
+    previous: Option<&ManagedSkillState>,
+    current_sha256: Option<&str>,
+    source_sha256: &str,
+) -> Result<ManagedSkillAction, String> {
+    if source_sha256 != skill.sha256 {
+        return Err(format!(
+            "managed skill {} source digest is invalid",
+            skill.name
+        ));
+    }
+    let next = |user_removed| ManagedSkillState {
+        version: skill.version.clone(),
+        content_sha256: skill.sha256.clone(),
+        user_removed,
+    };
+    match (previous, current_sha256) {
+        (None, None) => Ok(ManagedSkillAction::Write(next(false))),
+        (None, Some(_)) => Ok(ManagedSkillAction::PreserveUnmanaged),
+        (Some(_), None) => Ok(ManagedSkillAction::RememberRemoved(next(true))),
+        (Some(record), Some(_)) if record.user_removed => Ok(ManagedSkillAction::PreserveUnmanaged),
+        (Some(record), Some(current))
+            if current == record.content_sha256 && current == skill.sha256 =>
+        {
+            Ok(ManagedSkillAction::KeepManaged(next(false)))
+        }
+        (Some(record), Some(current)) if current == record.content_sha256 => {
+            Ok(ManagedSkillAction::Write(next(false)))
+        }
+        (Some(_), Some(_)) => Ok(ManagedSkillAction::PreserveUnmanaged),
     }
 }
 
@@ -892,12 +1135,13 @@ fn plan_profile(
         current_bundles.extend([BASE_BUNDLE.to_owned(), WEB_APP_BUNDLE.to_owned()]);
     }
     current_bundles.retain(|bundle| bundle != LEGACY_SIDE_PANEL);
-    deduplicate(&mut current_bundles);
+    insert_market_bundle(&mut current_bundles);
 
     let mut next_state = PluginInstallState {
         schema_version: SUPPORTED_SCHEMA_VERSION,
         lock_digest: lock_digest.to_owned(),
         managed: BTreeMap::new(),
+        managed_skills: BTreeMap::new(),
         sidebar_defaults_seeded: state.sidebar_defaults_seeded,
     };
     let mut managed_packages = Vec::new();
@@ -927,13 +1171,17 @@ fn plan_profile(
             plugin.package.clone(),
             Value::String(link_spec(&target_text)),
         );
-        let bundle_enabled = previous
-            .map(|_| {
-                current_bundles
-                    .iter()
-                    .any(|bundle| bundle == &plugin.package)
-            })
-            .unwrap_or(true);
+        let bundle_enabled = if plugin.package == DESKTOP_SETTINGS_BUNDLE {
+            true
+        } else {
+            previous
+                .map(|_| {
+                    current_bundles
+                        .iter()
+                        .any(|bundle| bundle == &plugin.package)
+                })
+                .unwrap_or(true)
+        };
         current_bundles.retain(|bundle| bundle != &plugin.package);
         next_state.managed.insert(
             plugin.package.clone(),
@@ -991,11 +1239,11 @@ fn plan_profile(
         })
         .map(|plugin| plugin.package.clone())
         .collect::<Vec<_>>();
-    let official_prefix = current_bundles
+    let managed_insertion = current_bundles
         .iter()
-        .take_while(|bundle| bundle.starts_with("@deepseek-ai/"))
-        .count();
-    current_bundles.splice(official_prefix..official_prefix, managed_bundles);
+        .position(|bundle| bundle == MARKET_BUNDLE)
+        .map_or(0, |index| index + 1);
+    current_bundles.splice(managed_insertion..managed_insertion, managed_bundles);
     deduplicate(&mut current_bundles);
 
     *object_field(root, "dependencies")? = dependency_values;
@@ -1005,6 +1253,39 @@ fn plan_profile(
         next_state,
         managed_packages,
     })
+}
+
+/// 将内置 Market 写入完整 profile，供托管插件校验前的独立持久化步骤使用。
+fn insert_builtin_market(profile: &mut Value) -> Result<(), String> {
+    let root = profile
+        .as_object_mut()
+        .ok_or_else(|| "profile package.json root must be an object".to_owned())?;
+    root.entry("name")
+        .or_insert_with(|| Value::String("dsh-profile-web".to_owned()));
+    root.entry("private").or_insert(Value::Bool(true));
+    let bundles = profile_bundles(root)?;
+    let mut current = bundles
+        .iter()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    if current.is_empty() {
+        current.extend([BASE_BUNDLE.to_owned(), WEB_APP_BUNDLE.to_owned()]);
+    }
+    insert_market_bundle(&mut current);
+    *bundles = current.into_iter().map(Value::String).collect();
+    Ok(())
+}
+
+/// 将 Market 固定在连续官方 bundle 之后，并移除用户 profile 中的重复激活项。
+fn insert_market_bundle(bundles: &mut Vec<String>) {
+    bundles.retain(|bundle| bundle != MARKET_BUNDLE);
+    deduplicate(bundles);
+    let official_prefix = bundles
+        .iter()
+        .take_while(|bundle| bundle.starts_with("@deepseek-ai/"))
+        .count();
+    bundles.insert(official_prefix, MARKET_BUNDLE.to_owned());
 }
 
 /// 校验 npm 包名，避免锁文件内容逃逸出 `node_modules`。
@@ -1048,7 +1329,14 @@ fn validate_plugin_source(package: &str, source: &PluginSource) -> Result<(), St
             }
             Ok(())
         }
+        PluginSource::Local { path } => validate_relative_path(path)
+            .map_err(|error| format!("plugin {package} local source {path:?}: {error}")),
     }
+}
+
+/// 计算文件内容的规范小写 SHA-256。
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
 }
 
 /// 校验 npm SRI 明确使用 SHA-512 且包含摘要正文。
@@ -1146,8 +1434,11 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        copy_physical_tree, plan_profile, DirectoryLinker, ManagedPluginState, PluginInstallState,
-        PluginLock, PluginManager, BASE_BUNDLE, LEGACY_SIDE_PANEL, WEB_APP_BUNDLE,
+        copy_physical_tree, normalized_path, package_relative_path, plan_managed_skill,
+        plan_profile, sha256_hex, DirectoryLinker, ManagedPluginState, ManagedSkill,
+        ManagedSkillAction, ManagedSkillState, PluginInstallState, PluginLock, PluginManager,
+        BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE, LEGACY_SIDE_PANEL, MARKET_BUNDLE,
+        MARKET_RUNTIME_ALIAS, WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {
@@ -1159,8 +1450,13 @@ mod tests {
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
-                {"package":"@linxin666/dsh-skins","version":"0.1.16","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["cordis.patch.yml"]}
-              ]
+                {"package":"@dsh-desktop/theme-settings","version":"0.1.0","bundleId":"desktop-theme-settings","license":"MIT","source":{"type":"local","path":"desktop-plugins/theme-settings"},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]},
+                {"package":"@linxin666/dsh-skins","version":"0.1.17","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["cordis.patch.yml"]},
+                {"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight-coding-agents","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dist/dsh.js"]},
+                {"package":"@liustack/modlens","version":"3.16.7","bundleId":"modlens","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dsh/index.js"]},
+                {"package":"@zebbkira/dsh-skills-mcp-manager","version":"0.1.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]}
+              ],
+              "skills":[{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
             }"#,
         )
         .unwrap()
@@ -1191,6 +1487,16 @@ mod tests {
     }
 
     #[test]
+    fn old_plugin_state_without_managed_skills_remains_compatible() {
+        let state: PluginInstallState = serde_json::from_slice(
+            br#"{"schemaVersion":1,"lockDigest":"old","managed":{},"sidebarDefaultsSeeded":true}"#,
+        )
+        .unwrap();
+        assert!(state.managed_skills.is_empty());
+        assert!(state.sidebar_defaults_seeded);
+    }
+
+    #[test]
     fn lock_rejects_truncated_archive_hash() {
         let error = PluginLock::parse(
             br#"{"schemaVersion":1,"plugins":[{
@@ -1218,18 +1524,121 @@ mod tests {
             vec![
                 BASE_BUNDLE,
                 WEB_APP_BUNDLE,
+                "dshmarket",
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
-                "@linxin666/dsh-skins"
+                "@dsh-desktop/theme-settings",
+                "@linxin666/dsh-skins",
+                "@vectorize-io/hindsight-coding-agents",
+                "@liustack/modlens",
+                "@zebbkira/dsh-skills-mcp-manager"
             ]
         );
-        assert_eq!(plan.managed_packages.len(), 4);
+        assert_eq!(plan.managed_packages.len(), 8);
         assert_eq!(plan.next_state.lock_digest, "digest-a");
         assert!(plan.profile["dependencies"]["dsh-at-file"]
             .as_str()
             .unwrap()
             .starts_with("link:"));
+    }
+
+    fn genui_skill() -> ManagedSkill {
+        ManagedSkill {
+            name: "genui".to_owned(),
+            source_package: "@omdsh-dev/dsh-genui".to_owned(),
+            source_file: "SKILL.md".to_owned(),
+            version: "0.8.4".to_owned(),
+            sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".to_owned(),
+        }
+    }
+
+    #[test]
+    fn managed_skill_first_install_and_unmodified_upgrade_are_written() {
+        let skill = genui_skill();
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                None,
+                None,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            )
+            .unwrap(),
+            ManagedSkillAction::Write(_)
+        ));
+        let current = ManagedSkillState {
+            version: "0.8.4".to_owned(),
+            content_sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                .to_owned(),
+            user_removed: false,
+        };
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                Some(&current),
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            ManagedSkillAction::KeepManaged(_)
+        ));
+        let previous = ManagedSkillState {
+            version: "0.8.3".to_owned(),
+            content_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .to_owned(),
+            user_removed: false,
+        };
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                Some(&previous),
+                Some("bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            ManagedSkillAction::Write(_)
+        ));
+    }
+
+    #[test]
+    fn managed_skill_preserves_unmanaged_modified_and_deleted_files() {
+        let skill = genui_skill();
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                None,
+                Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            ManagedSkillAction::PreserveUnmanaged
+        ));
+        let previous = ManagedSkillState {
+            version: "0.8.3".to_owned(),
+            content_sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                .to_owned(),
+            user_removed: false,
+        };
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                Some(&previous),
+                Some("cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            ManagedSkillAction::PreserveUnmanaged
+        ));
+        assert!(matches!(
+            plan_managed_skill(
+                &skill,
+                Some(&previous),
+                None,
+                "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            )
+            .unwrap(),
+            ManagedSkillAction::RememberRemoved(_)
+        ));
     }
 
     #[test]
@@ -1292,10 +1701,50 @@ mod tests {
             vec![
                 BASE_BUNDLE,
                 WEB_APP_BUNDLE,
+                "dshmarket",
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
+                "@dsh-desktop/theme-settings",
                 "@linxin666/dsh-skins",
+                "@vectorize-io/hindsight-coding-agents",
+                "@liustack/modlens",
+                "@zebbkira/dsh-skills-mcp-manager",
+                "user-bundle"
+            ]
+        );
+    }
+
+    #[test]
+    fn bundled_market_is_active_without_replacing_user_dependency() {
+        let profile = json!({
+          "dependencies": {"dshmarket": "1.4.0"},
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, WEB_APP_BUNDLE, "user-bundle"]}}
+        });
+        let plan = plan_profile(
+            profile,
+            &PluginInstallState::default(),
+            &lock(),
+            Path::new(r"C:\managed\node_modules"),
+            "digest-market",
+        )
+        .unwrap();
+
+        assert_eq!(plan.profile["dependencies"]["dshmarket"], "1.4.0");
+        assert_eq!(
+            bundles(&plan.profile),
+            vec![
+                BASE_BUNDLE,
+                WEB_APP_BUNDLE,
+                "dshmarket",
+                "dsh-at-file",
+                "@omdsh-dev/dsh-genui",
+                "dsh-better-sidebar",
+                "@dsh-desktop/theme-settings",
+                "@linxin666/dsh-skins",
+                "@vectorize-io/hindsight-coding-agents",
+                "@liustack/modlens",
+                "@zebbkira/dsh-skills-mcp-manager",
                 "user-bundle"
             ]
         );
@@ -1316,6 +1765,7 @@ mod tests {
             schema_version: 1,
             lock_digest: "old".to_owned(),
             managed,
+            managed_skills: BTreeMap::new(),
             sidebar_defaults_seeded: true,
         };
         let profile = json!({
@@ -1334,6 +1784,48 @@ mod tests {
         assert!(!bundles(&plan.profile).contains(&"dsh-at-file"));
         assert!(!plan.next_state.managed["dsh-at-file"].bundle_enabled);
         assert_eq!(plan.next_state.managed["dsh-at-file"].version, "0.6.0");
+    }
+
+    #[test]
+    fn newly_managed_plugin_disable_survives_upgrade_but_control_bundle_is_restored() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let mut managed = BTreeMap::new();
+        for package in [
+            "@vectorize-io/hindsight-coding-agents",
+            DESKTOP_SETTINGS_BUNDLE,
+        ] {
+            managed.insert(
+                package.to_owned(),
+                ManagedPluginState {
+                    version: "old".to_owned(),
+                    link_target: normalized_path(
+                        &store.join(package_relative_path(package).unwrap()),
+                    ),
+                    bundle_enabled: true,
+                },
+            );
+        }
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed,
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dependencies": {
+            "@vectorize-io/hindsight-coding-agents": "link:C:/managed/node_modules/@vectorize-io/hindsight-coding-agents",
+            "@dsh-desktop/theme-settings": "link:C:/managed/node_modules/@dsh-desktop/theme-settings"
+          },
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE]}}
+        });
+        let plan = plan_profile(profile, &state, &lock(), store, "new").unwrap();
+        let active = bundles(&plan.profile);
+
+        assert!(!active.contains(&"@vectorize-io/hindsight-coding-agents"));
+        assert!(active.contains(&DESKTOP_SETTINGS_BUNDLE));
+        assert!(!plan.next_state.managed["@vectorize-io/hindsight-coding-agents"].bundle_enabled);
+        assert!(plan.next_state.managed[DESKTOP_SETTINGS_BUNDLE].bundle_enabled);
     }
 
     #[test]
@@ -1447,7 +1939,9 @@ mod tests {
         }
 
         fn create(&self, link: &Path, target: &Path) -> Result<(), String> {
-            fs::write(&self.profile, br#"{"name":"written-by-user"}"#).unwrap();
+            if !link.ends_with(MARKET_RUNTIME_ALIAS) {
+                fs::write(&self.profile, br#"{"name":"written-by-user"}"#).unwrap();
+            }
             self.links
                 .lock()
                 .unwrap()
@@ -1467,6 +1961,7 @@ mod tests {
         let dsh_home = root.path().join("home/.dsh");
         let web_profile = dsh_home.join("profiles/web");
         let managed = dsh_home.join("profiles/node_modules/.dsh-desktop");
+        let market_root = root.path().join("runtime/host/node_modules/dshmarket");
         root.write(
             "resources/plugins/plugins.lock.json",
             br#"{
@@ -1488,10 +1983,74 @@ mod tests {
             "resources/plugins/node_modules/dsh-better-sidebar/cordis.patch.yml",
             b"- insert: []",
         );
+        root.write(
+            "runtime/host/node_modules/dshmarket/package.json",
+            br#"{"name":"dshmarket","version":"1.6.0"}"#,
+        );
         let linker = Arc::new(FakeLinker::default());
-        let manager =
-            PluginManager::with_linker(resources, dsh_home, web_profile, managed, linker.clone());
+        let manager = PluginManager::with_linker(
+            resources,
+            dsh_home,
+            web_profile,
+            managed,
+            market_root,
+            root.path().join("home"),
+            linker.clone(),
+        );
         (root, manager, linker)
+    }
+
+    fn managed_files_fixture() -> (TestDirectory, PluginManager) {
+        let root = TestDirectory::new("managed-files");
+        let resources = root.path().join("resources/plugins");
+        let dsh_home = root.path().join("home/.dsh");
+        let skill_content = b"---\nname: genui\ndescription: test\n---\n";
+        let skill_digest = sha256_hex(skill_content);
+        let lock = format!(
+            r#"{{
+              "schemaVersion":1,
+              "plugins":[
+                {{"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="}},"requiredFiles":["lib/index.js","SKILL.md"]}},
+                {{"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight","license":"MIT","source":{{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="}},"requiredFiles":["dist/dsh.js"]}}
+              ],
+              "skills":[{{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"{skill_digest}"}}]
+            }}"#
+        );
+        root.write("resources/plugins/plugins.lock.json", lock);
+        root.write(
+            "resources/plugins/node_modules/@omdsh-dev/dsh-genui/package.json",
+            br#"{"name":"@omdsh-dev/dsh-genui","version":"0.8.4"}"#,
+        );
+        root.write(
+            "resources/plugins/node_modules/@omdsh-dev/dsh-genui/lib/index.js",
+            b"export {}",
+        );
+        root.write(
+            "resources/plugins/node_modules/@omdsh-dev/dsh-genui/SKILL.md",
+            skill_content,
+        );
+        root.write(
+            "resources/plugins/node_modules/@vectorize-io/hindsight-coding-agents/package.json",
+            br#"{"name":"@vectorize-io/hindsight-coding-agents","version":"0.3.4"}"#,
+        );
+        root.write(
+            "resources/plugins/node_modules/@vectorize-io/hindsight-coding-agents/dist/dsh.js",
+            b"export {}",
+        );
+        root.write(
+            "runtime/host/node_modules/dshmarket/package.json",
+            br#"{"name":"dshmarket","version":"1.6.0"}"#,
+        );
+        let manager = PluginManager::with_linker(
+            resources,
+            dsh_home.clone(),
+            dsh_home.join("profiles/web"),
+            dsh_home.join("profiles/node_modules/.dsh-desktop"),
+            root.path().join("runtime/host/node_modules/dshmarket"),
+            root.path().join("home"),
+            Arc::new(FakeLinker::default()),
+        );
+        (root, manager)
     }
 
     #[test]
@@ -1507,7 +2066,7 @@ mod tests {
             .path()
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .exists());
-        assert_eq!(linker.links.lock().unwrap().len(), 1);
+        assert_eq!(linker.links.lock().unwrap().len(), 2);
 
         transaction.commit().unwrap();
         assert!(root
@@ -1525,11 +2084,13 @@ mod tests {
         let transaction = manager.prepare().unwrap();
         transaction.rollback().unwrap();
 
-        assert_eq!(
-            fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
-            original
-        );
-        assert!(linker.links.lock().unwrap().is_empty());
+        let restored: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(restored["dependencies"], json!({}));
+        assert_eq!(bundles(&restored), vec![BASE_BUNDLE, MARKET_BUNDLE]);
+        assert_eq!(linker.links.lock().unwrap().len(), 1);
         assert!(!root
             .path()
             .join("home/.dsh/desktop-managed/plugins-state.json")
@@ -1537,7 +2098,55 @@ mod tests {
     }
 
     #[test]
-    fn missing_required_plugin_file_fails_without_touching_profile() {
+    fn rollback_removes_new_managed_skill_and_hindsight_config() {
+        let (root, manager) = managed_files_fixture();
+        let transaction = manager.prepare().unwrap();
+        let skill = root.path().join("home/.dsh/skills/genui/SKILL.md");
+        let hindsight = root.path().join("home/.hindsight/coding-agent.json");
+        assert!(skill.is_file());
+        assert!(hindsight.is_file());
+        let config: Value = serde_json::from_slice(&fs::read(&hindsight).unwrap()).unwrap();
+        assert_eq!(config["harnesses"]["dsh"]["optInOnly"], true);
+        assert_eq!(config["harnesses"]["dsh"]["optInPaths"], json!([]));
+
+        transaction.rollback().unwrap();
+        assert!(!skill.exists());
+        assert!(!hindsight.exists());
+    }
+
+    #[test]
+    fn existing_hindsight_config_and_user_modified_skill_are_preserved() {
+        let (root, manager) = managed_files_fixture();
+        root.write(
+            "home/.hindsight/coding-agent.json",
+            br#"{"apiUrl":"http://127.0.0.1:8888"}"#,
+        );
+        root.write("home/.dsh/skills/genui/SKILL.md", b"user-owned");
+
+        let transaction = manager.prepare().unwrap();
+        transaction.commit().unwrap();
+
+        assert_eq!(
+            fs::read(root.path().join("home/.hindsight/coding-agent.json")).unwrap(),
+            br#"{"apiUrl":"http://127.0.0.1:8888"}"#
+        );
+        assert_eq!(
+            fs::read(root.path().join("home/.dsh/skills/genui/SKILL.md")).unwrap(),
+            b"user-owned"
+        );
+        let state: PluginInstallState = serde_json::from_slice(
+            &fs::read(
+                root.path()
+                    .join("home/.dsh/desktop-managed/plugins-state.json"),
+            )
+            .unwrap(),
+        )
+        .unwrap();
+        assert!(!state.managed_skills.contains_key("genui"));
+    }
+
+    #[test]
+    fn missing_required_plugin_file_keeps_only_builtin_market_profile() {
         let (root, manager, _linker) = manager_fixture();
         fs::remove_file(
             root.path()
@@ -1547,10 +2156,14 @@ mod tests {
 
         let error = manager.prepare().err().unwrap();
         assert!(error.contains("required file"));
-        assert!(!root
-            .path()
-            .join("home/.dsh/profiles/web/package.json")
-            .exists());
+        let profile: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            bundles(&profile),
+            vec![BASE_BUNDLE, WEB_APP_BUNDLE, MARKET_BUNDLE]
+        );
     }
 
     #[test]
@@ -1572,6 +2185,8 @@ mod tests {
             dsh_home.clone(),
             web_profile,
             dsh_home.join("profiles/node_modules/.dsh-desktop"),
+            root.path().join("runtime/host/node_modules/dshmarket"),
+            root.path().join("home"),
             linker.clone(),
         );
 
@@ -1581,7 +2196,7 @@ mod tests {
             fs::read(profile_path).unwrap(),
             br#"{"name":"written-by-user"}"#
         );
-        assert!(linker.links.lock().unwrap().is_empty());
+        assert_eq!(linker.links.lock().unwrap().len(), 1);
     }
 
     #[cfg(windows)]

@@ -1,5 +1,7 @@
 //! DSH Host 子进程创建、状态探测与清理。
 
+use std::env;
+use std::ffi::{OsStr, OsString};
 use std::io;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
@@ -99,19 +101,26 @@ impl HostSupervisor {
             return Err("host is already running".to_owned());
         }
         log_app(&format!(
-            "spawning: {} --expose-internals {} web --host 127.0.0.1 --port 0 (cwd: {})",
+            "spawning: {} --expose-internals {} web --patch {} --host 127.0.0.1 --port 0 (cwd: {})",
             paths.node.display(),
             paths.cli_entry.display(),
+            paths.desktop_policy_patch.display(),
             paths.working_directory.display()
         ));
 
+        let inherited_path = env::var_os("PATH");
+        let host_path = build_host_path(paths, inherited_path.as_deref())?;
         let mut command = Command::new(&paths.node);
         command
             .arg("--expose-internals")
             .arg(&paths.cli_entry)
-            .args(["web", "--host", "127.0.0.1", "--port", "0"])
+            .arg("web")
+            .arg("--patch")
+            .arg(&paths.desktop_policy_patch)
+            .args(["--host", "127.0.0.1", "--port", "0"])
             .current_dir(&paths.working_directory)
             .env("DSH_HOME", &paths.dsh_home)
+            .env("PATH", host_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         hide_console_window(&mut command);
@@ -225,6 +234,25 @@ impl HostSupervisor {
     }
 }
 
+/// 生成 Host 私有 PATH，确保内置 Node 与 pnpm 在用户和系统工具之前解析。
+fn build_host_path(paths: &RuntimePaths, inherited: Option<&OsStr>) -> Result<OsString, String> {
+    let node_directory = paths.node.parent().ok_or_else(|| {
+        format!(
+            "bundled Node has no parent directory: {}",
+            paths.node.display()
+        )
+    })?;
+    let mut directories = vec![
+        node_directory.to_path_buf(),
+        paths.tool_bin_directory.clone(),
+    ];
+    if let Some(value) = inherited {
+        directories.extend(env::split_paths(value));
+    }
+    env::join_paths(directories)
+        .map_err(|error| format!("failed to construct private Host PATH: {error}"))
+}
+
 /// 调用 Windows `taskkill` 处理指定 PID 的完整进程树，并保留失败诊断。
 fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
     let pid_text = pid.to_string();
@@ -272,7 +300,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use super::{HostSupervisor, ManagedChild, ProcessTreeTerminator};
+    use super::{build_host_path, HostSupervisor, ManagedChild, ProcessTreeTerminator};
     use crate::runtime::RuntimePaths;
 
     struct FakeChild {
@@ -356,7 +384,10 @@ mod tests {
             node: std::env::temp_dir().join("dsh-desktop-node-does-not-exist.exe"),
             cli_entry: std::env::temp_dir().join("fake-host.js"),
             host_root: std::env::temp_dir(),
+            tool_bin_directory: std::env::temp_dir().join("node_modules/.bin"),
+            desktop_policy_patch: std::env::temp_dir().join("dsh-market.patch.yml"),
             plugins_root: std::env::temp_dir(),
+            user_home: std::env::temp_dir(),
             dsh_home: std::env::temp_dir(),
             web_profile: std::env::temp_dir(),
             managed_plugins_root: std::env::temp_dir(),
@@ -409,5 +440,42 @@ mod tests {
         supervisor.shutdown_with(&FailingTerminator, Duration::ZERO, Duration::ZERO);
 
         assert!(forced.load(Ordering::SeqCst));
+    }
+
+    #[test]
+    fn host_path_prefers_bundled_node_and_pnpm_before_inherited_path() {
+        let paths = RuntimePaths {
+            node: std::path::PathBuf::from(r"C:\app\node\node.exe"),
+            cli_entry: std::path::PathBuf::from(
+                r"C:\app\host\node_modules\@deepseek-ai\dsh\lib\bin.js",
+            ),
+            host_root: std::path::PathBuf::from(r"C:\app\host"),
+            tool_bin_directory: std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
+            desktop_policy_patch: std::path::PathBuf::from(r"C:\app\policy\dsh-market.patch.yml"),
+            plugins_root: std::env::temp_dir(),
+            user_home: std::env::temp_dir(),
+            dsh_home: std::env::temp_dir(),
+            web_profile: std::env::temp_dir(),
+            managed_plugins_root: std::env::temp_dir(),
+            working_directory: std::env::temp_dir(),
+            readiness_timeout: Duration::from_secs(1),
+        };
+        let inherited = std::env::join_paths([
+            std::path::Path::new(r"C:\Windows\System32"),
+            std::path::Path::new(r"C:\tools"),
+        ])
+        .unwrap();
+
+        let actual = build_host_path(&paths, Some(&inherited)).unwrap();
+        let directories = std::env::split_paths(&actual).collect::<Vec<_>>();
+        assert_eq!(
+            directories,
+            vec![
+                std::path::PathBuf::from(r"C:\app\node"),
+                std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
+                std::path::PathBuf::from(r"C:\Windows\System32"),
+                std::path::PathBuf::from(r"C:\tools")
+            ]
+        );
     }
 }

@@ -31,7 +31,7 @@ pwsh -NoProfile -File scripts/installer-smoke.ps1 `
 
 ## 覆盖范围
 
-Rust 单元测试覆盖严格就绪协议、Host 原点导航、运行时路径优先级、启动超时、启动失败、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖锁文件完整性、bundle 顺序、用户安装优先、用户禁用、旧侧栏停用、重复迁移、缺失资源、事务提交/回滚、Better Sidebar revision 设置和真实 Windows junction。Host supervisor 通过注入 fake child 和 fake process-tree terminator 验证，不启动真实 DSH，也不使用固定等待时间。
+Rust 单元测试覆盖严格就绪协议、Host 原点导航、私有 Node/pnpm PATH 优先级、Host 重启状态机、启动超时、启动失败、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖 8 个 bundle 的固定顺序、用户安装优先、全部新增项的禁用保持、GenUI Skill 首装/升级/修改/删除、Hindsight 配置保留、缺失资源、事务提交/回滚、Better Sidebar revision 设置和真实 Windows junction。桌面设置 bundle 的 Node 测试覆盖 allowlist、受保护项、未知包拒绝、只改 bundles、幂等与并发写。Host supervisor 通过注入 fake child 和 fake process-tree terminator 验证，不启动真实 DSH，也不使用固定等待时间。
 
 Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 

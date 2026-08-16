@@ -33,11 +33,13 @@ $previousEnvironment = @{
     DSH_DESKTOP_NODE_EXECUTABLE = $env:DSH_DESKTOP_NODE_EXECUTABLE
     DSH_DESKTOP_CLI_ENTRY = $env:DSH_DESKTOP_CLI_ENTRY
     DSH_DESKTOP_CWD = $env:DSH_DESKTOP_CWD
+    DSH_DESKTOP_USER_HOME = $env:DSH_DESKTOP_USER_HOME
     DSH_DESKTOP_READY_TIMEOUT_SECS = $env:DSH_DESKTOP_READY_TIMEOUT_SECS
 }
 
 $desktopProcess = $null
 $hostProcessId = $null
+$secondaryProcesses = @()
 $succeeded = $false
 
 try {
@@ -53,6 +55,7 @@ try {
         $env:DSH_DESKTOP_CLI_ENTRY = $fakeHostPath
     }
     $env:DSH_DESKTOP_CWD = $workingDirectory
+    $env:DSH_DESKTOP_USER_HOME = $smokeRoot
     $env:DSH_DESKTOP_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
 
     $desktopProcess = Start-Process -FilePath $exePath -PassThru
@@ -85,6 +88,7 @@ try {
 
     # 二次启动必须快速退出，并由现有实例处理聚焦，不能再创建 Host。
     $second = Start-Process -FilePath $exePath -PassThru
+    $secondaryProcesses += $second
     if (-not $second.WaitForExit(10000)) {
         throw 'Secondary instance did not exit within 10 seconds.'
     }
@@ -117,6 +121,7 @@ try {
 
     # 自动化退出参数进入与托盘“退出”相同的幂等清理路径。
     $quitRequest = Start-Process -FilePath $exePath -ArgumentList '--quit-existing' -PassThru
+    $secondaryProcesses += $quitRequest
     if (-not $quitRequest.WaitForExit(10000)) {
         throw 'Quit request process did not exit within 10 seconds.'
     }
@@ -135,8 +140,23 @@ finally {
     if ($desktopProcess -and -not $desktopProcess.HasExited) {
         Stop-Process -Id $desktopProcess.Id -Force -ErrorAction SilentlyContinue
     }
-    if ($hostProcessId -and (Get-Process -Id $hostProcessId -ErrorAction SilentlyContinue)) {
-        Stop-Process -Id $hostProcessId -Force -ErrorAction SilentlyContinue
+    foreach ($process in $secondaryProcesses) {
+        $process.Refresh()
+        if (-not $process.HasExited) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+        }
+    }
+    # 唯一临时日志只属于本次 smoke，可安全回收其中记录的全部 Host PID。
+    if (Test-Path -LiteralPath $logPath -PathType Leaf) {
+        $recordedHostIds = [regex]::Matches(
+            (Get-Content -LiteralPath $logPath -Raw),
+            'host started: pid=(\d+)'
+        ) | ForEach-Object { [int]$_.Groups[1].Value } | Sort-Object -Unique
+        foreach ($recordedHostId in $recordedHostIds) {
+            if (Get-Process -Id $recordedHostId -ErrorAction SilentlyContinue) {
+                Stop-Process -Id $recordedHostId -Force -ErrorAction SilentlyContinue
+            }
+        }
     }
 
     foreach ($name in $previousEnvironment.Keys) {

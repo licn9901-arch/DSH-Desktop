@@ -1,0 +1,9 @@
+- id: dsh-market
+  name: dshmarket
+  disabled: true
+- insert:
+    - id: dsh-market-desktop
+      name: dshmarket-desktop
+      config:
+        profile: web
+        allowRestart: false

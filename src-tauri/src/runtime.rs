@@ -13,7 +13,10 @@ pub struct RuntimePaths {
     pub node: PathBuf,
     pub cli_entry: PathBuf,
     pub host_root: PathBuf,
+    pub tool_bin_directory: PathBuf,
+    pub desktop_policy_patch: PathBuf,
     pub plugins_root: PathBuf,
+    pub user_home: PathBuf,
     pub dsh_home: PathBuf,
     pub web_profile: PathBuf,
     pub managed_plugins_root: PathBuf,
@@ -34,6 +37,7 @@ struct RuntimeInputs {
     node_override: Option<String>,
     cli_override: Option<String>,
     working_directory: Option<String>,
+    user_home_override: Option<String>,
     user_profile: Option<String>,
     home: Option<String>,
     dsh_home: Option<String>,
@@ -48,6 +52,7 @@ impl RuntimeInputs {
             node_override: non_empty_env("DSH_DESKTOP_NODE_EXECUTABLE"),
             cli_override: non_empty_env("DSH_DESKTOP_CLI_ENTRY"),
             working_directory: non_empty_env("DSH_DESKTOP_CWD"),
+            user_home_override: non_empty_env("DSH_DESKTOP_USER_HOME"),
             user_profile: non_empty_env("USERPROFILE"),
             home: non_empty_env("HOME"),
             dsh_home: non_empty_env("DSH_HOME"),
@@ -65,18 +70,36 @@ impl RuntimeInputs {
         allow_development_fallbacks: bool,
     ) -> Result<RuntimePaths, String> {
         let resource_dir = normalize_windows_verbatim_path(resource_dir);
+        let user_home = self.resolve_user_home(allow_development_fallbacks);
         let dsh_home = self.resolve_dsh_home();
         Ok(RuntimePaths {
             node: self.resolve_node(&resource_dir, allow_development_fallbacks)?,
             cli_entry: self.resolve_cli_entry(&resource_dir, allow_development_fallbacks)?,
             host_root: resource_dir.join("host"),
+            tool_bin_directory: resource_dir.join("host/node_modules/.bin"),
+            desktop_policy_patch: resource_dir.join("policy/dsh-market.patch.yml"),
             plugins_root: resource_dir.join("plugins"),
+            user_home,
             web_profile: dsh_home.join("profiles/web"),
             managed_plugins_root: dsh_home.join("profiles/node_modules/.dsh-desktop"),
             dsh_home,
             working_directory: self.resolve_working_directory(),
             readiness_timeout: self.resolve_readiness_timeout(),
         })
+    }
+
+    /// 解析真实用户主目录，供不遵循 DSH_HOME 的第三方工具保存首次配置。
+    fn resolve_user_home(&self, allow_development_fallbacks: bool) -> PathBuf {
+        if allow_development_fallbacks {
+            if let Some(value) = &self.user_home_override {
+                return PathBuf::from(value);
+            }
+        }
+        self.user_profile
+            .as_ref()
+            .or(self.home.as_ref())
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
     }
 
     /// 解析 Node 可执行文件，优先使用显式覆盖和应用内置副本。
@@ -295,12 +318,14 @@ mod tests {
             node_override: Some(node.display().to_string()),
             cli_override: Some(cli.display().to_string()),
             working_directory: Some(resources.path().display().to_string()),
+            user_home_override: Some(resources.path().join("user").display().to_string()),
             readiness_timeout: Some("12".to_owned()),
             ..Default::default()
         };
         let resolved = inputs.resolve(resources.path(), true).unwrap();
         assert_eq!(resolved.node, node);
         assert_eq!(resolved.cli_entry, cli);
+        assert_eq!(resolved.user_home, resources.path().join("user"));
         assert_eq!(resolved.readiness_timeout, Duration::from_secs(12));
     }
 
@@ -334,6 +359,7 @@ mod tests {
         let inputs = RuntimeInputs {
             node_override: Some(node_override.display().to_string()),
             cli_override: Some(cli_override.display().to_string()),
+            user_home_override: Some(overrides.path().join("user").display().to_string()),
             ..Default::default()
         };
         assert!(inputs.resolve(resources.path(), false).is_err());
@@ -343,6 +369,7 @@ mod tests {
         let resolved = inputs.resolve(resources.path(), false).unwrap();
         assert_eq!(resolved.node, bundled_node);
         assert_eq!(resolved.cli_entry, bundled_cli);
+        assert_ne!(resolved.user_home, overrides.path().join("user"));
     }
 
     #[cfg(windows)]
@@ -377,6 +404,14 @@ mod tests {
         assert_eq!(resolved.dsh_home, home.path());
         assert_eq!(resolved.web_profile, home.path().join("profiles/web"));
         assert_eq!(resolved.host_root, resources.path().join("host"));
+        assert_eq!(
+            resolved.tool_bin_directory,
+            resources.path().join("host/node_modules/.bin")
+        );
+        assert_eq!(
+            resolved.desktop_policy_patch,
+            resources.path().join("policy/dsh-market.patch.yml")
+        );
         assert_eq!(resolved.plugins_root, resources.path().join("plugins"));
     }
 

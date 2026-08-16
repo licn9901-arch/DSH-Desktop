@@ -56,6 +56,8 @@ $sizeMiB = [Math]::Round($installer.Length / 1MB, 2)
 - Target: Windows x64 NSIS
 - Node.js: $($runtimeLock.node.version)
 - @deepseek-ai/dsh: $($runtimeLock.dsh.version)
+- dshmarket: $($runtimeLock.market.version)
+- pnpm: $($runtimeLock.pnpm.version)
 - Managed plugins: $(($pluginLock.plugins | ForEach-Object { "$($_.package)@$($_.version)" }) -join ', ')
 - Installer: $publishedInstallerName
 - Installer size: $($installer.Length) bytes ($sizeMiB MiB)

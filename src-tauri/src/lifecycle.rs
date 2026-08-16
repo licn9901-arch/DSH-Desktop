@@ -1,5 +1,137 @@
 //! 应用与 Host 之间共享的生命周期类型。
 
+use std::sync::{mpsc, Arc, Mutex};
+
+/// 桌面托管 Host 的运行状态，用于限制重启与退出操作的并发关系。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostRuntimeState {
+    /// Host 正在进行首次启动。
+    Starting,
+    /// Host 已通过就绪检查并可供 WebView 使用。
+    Ready,
+    /// 桌面协调线程正在串行替换 Host 进程。
+    Restarting,
+    /// 应用正在退出，不再接受重启。
+    Stopping,
+    /// 最近一次启动或重启失败，可由用户再次尝试重启。
+    Failed,
+}
+
+/// 管理 Host 运行状态转换，避免托盘重复点击触发并行重启。
+#[derive(Debug)]
+pub struct HostStateMachine {
+    state: HostRuntimeState,
+}
+
+impl Default for HostStateMachine {
+    /// 创建处于首次启动阶段的状态机。
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl HostStateMachine {
+    /// 创建 Host 状态机，初始状态为 `Starting`。
+    pub fn new() -> Self {
+        Self {
+            state: HostRuntimeState::Starting,
+        }
+    }
+
+    /// 返回当前 Host 运行状态。
+    pub fn state(&self) -> HostRuntimeState {
+        self.state
+    }
+
+    /// 标记 Host 已完成就绪检查。
+    pub fn mark_ready(&mut self) {
+        self.state = HostRuntimeState::Ready;
+    }
+
+    /// 尝试进入重启状态；仅 Ready 或 Failed 状态允许发起重启。
+    pub fn begin_restart(&mut self) -> Result<(), String> {
+        match self.state {
+            HostRuntimeState::Ready | HostRuntimeState::Failed => {
+                self.state = HostRuntimeState::Restarting;
+                Ok(())
+            }
+            state => Err(format!("host cannot restart while in state {state:?}")),
+        }
+    }
+
+    /// 标记应用进入退出流程，后续重启请求都会被拒绝。
+    pub fn mark_stopping(&mut self) {
+        self.state = HostRuntimeState::Stopping;
+    }
+
+    /// 标记最近一次 Host 启动或重启失败。
+    pub fn mark_failed(&mut self) {
+        self.state = HostRuntimeState::Failed;
+    }
+}
+
+/// Host 协调线程可接收的桌面内部命令。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum HostCommand {
+    /// 串行停止并重新启动当前 DSH Host。
+    Restart,
+}
+
+/// 桌面内部 Host 控制器，只暴露受状态机保护的重启与状态更新能力。
+pub struct HostController {
+    sender: mpsc::Sender<HostCommand>,
+    state: Arc<Mutex<HostStateMachine>>,
+}
+
+impl HostController {
+    /// 创建控制器和唯一命令接收端，接收端应由 Host 协调线程独占。
+    pub(crate) fn new() -> (Self, mpsc::Receiver<HostCommand>) {
+        let (sender, receiver) = mpsc::channel();
+        (
+            Self {
+                sender,
+                state: Arc::new(Mutex::new(HostStateMachine::new())),
+            },
+            receiver,
+        )
+    }
+
+    /// 请求串行重启；忙碌、启动中或退出中会返回错误且不发送命令。
+    pub fn restart(&self) -> Result<(), String> {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.begin_restart()?;
+        if self.sender.send(HostCommand::Restart).is_err() {
+            state.mark_failed();
+            return Err("host controller is not available".to_owned());
+        }
+        Ok(())
+    }
+
+    /// 标记当前 Host 已就绪。
+    pub(crate) fn mark_ready(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .mark_ready();
+    }
+
+    /// 标记 Host 启动或重启失败。
+    pub(crate) fn mark_failed(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .mark_failed();
+    }
+
+    /// 标记应用正在退出，拒绝后续重启请求。
+    pub(crate) fn mark_stopping(&self) {
+        self.state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .mark_stopping();
+    }
+}
+
 /// Host 监督线程向应用主流程发送的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostEvent {
@@ -109,7 +241,10 @@ impl LifecycleStateMachine {
 
 #[cfg(test)]
 mod tests {
-    use super::{HostEvent, LifecycleAction, LifecycleStateMachine, ShutdownReason};
+    use super::{
+        HostEvent, HostRuntimeState, HostStateMachine, LifecycleAction, LifecycleStateMachine,
+        ShutdownReason,
+    };
 
     #[test]
     fn timeout_is_a_startup_failure_without_waiting() {
@@ -166,5 +301,37 @@ mod tests {
             LifecycleAction::Ignore
         );
         assert_eq!(shutting_down.on_timeout(true, 1), LifecycleAction::Ignore);
+    }
+
+    #[test]
+    fn runtime_state_serializes_restart_and_allows_retry_after_failure() {
+        let mut machine = HostStateMachine::new();
+        assert_eq!(machine.state(), HostRuntimeState::Starting);
+        machine.mark_ready();
+        assert_eq!(machine.state(), HostRuntimeState::Ready);
+        assert!(machine.begin_restart().is_ok());
+        assert_eq!(machine.state(), HostRuntimeState::Restarting);
+        assert!(machine.begin_restart().is_err());
+
+        machine.mark_failed();
+        assert_eq!(machine.state(), HostRuntimeState::Failed);
+        assert!(machine.begin_restart().is_ok());
+        machine.mark_stopping();
+        assert_eq!(machine.state(), HostRuntimeState::Stopping);
+        assert!(machine.begin_restart().is_err());
+    }
+
+    #[test]
+    fn controller_sends_only_one_restart_while_busy() {
+        let (controller, receiver) = super::HostController::new();
+        controller.mark_ready();
+
+        assert!(controller.restart().is_ok());
+        assert_eq!(receiver.try_recv(), Ok(super::HostCommand::Restart));
+        assert!(controller.restart().is_err());
+
+        controller.mark_failed();
+        assert!(controller.restart().is_ok());
+        assert_eq!(receiver.try_recv(), Ok(super::HostCommand::Restart));
     }
 }

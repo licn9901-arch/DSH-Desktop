@@ -18,13 +18,30 @@ $installedExe = Join-Path $installRoot 'dsh-desktop.exe'
 $uninstaller = Join-Path $installRoot 'uninstall.exe'
 $bundledNode = Join-Path $installRoot 'node\node.exe'
 $bundledCli = Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh\lib\bin.js'
+$bundledMarket = Join-Path $installRoot 'host\node_modules\dshmarket\package.json'
+$bundledPnpm = Join-Path $installRoot 'host\node_modules\.bin\pnpm.cmd'
+$bundledMarketPolicy = Join-Path $installRoot 'policy\dsh-market.patch.yml'
+$bundledRuntimeLicenses = @(
+    (Join-Path $installRoot 'node\LICENSE'),
+    (Join-Path $installRoot 'host\node_modules\dshmarket\LICENSE'),
+    (Join-Path $installRoot 'host\node_modules\pnpm\LICENSE'),
+    (Join-Path $installRoot 'host\THIRD_PARTY_NOTICES.md')
+)
 $bundledPluginLock = Join-Path $installRoot 'plugins\plugins.lock.json'
 $bundledPlugins = @(
     (Join-Path $installRoot 'plugins\node_modules\dsh-at-file\lib\index.js'),
     (Join-Path $installRoot 'plugins\node_modules\@omdsh-dev\dsh-genui\lib\assets\mermaid.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@omdsh-dev\dsh-genui\SKILL.md'),
     (Join-Path $installRoot 'plugins\node_modules\dsh-better-sidebar\lib\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@dsh-desktop\theme-settings\lib\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@dsh-desktop\theme-settings\lib\client.js'),
     (Join-Path $installRoot 'plugins\node_modules\@linxin666\dsh-skins\cordis.patch.yml'),
-    (Join-Path $installRoot 'plugins\node_modules\@linxin666\dsh-client-ui-skin-center\lib\index.js')
+    (Join-Path $installRoot 'plugins\node_modules\@linxin666\dsh-client-ui-skin-center\lib\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@vectorize-io\hindsight-coding-agents\dist\dsh.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\client.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@zebbkira\dsh-skills-mcp-manager\lib\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@zebbkira\dsh-skills-mcp-manager\lib\client.js')
 )
 $webIndexCandidates = @(
     (Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh-web-frontend\dist\index.html'),
@@ -57,6 +74,10 @@ try {
             (Test-Path -LiteralPath $uninstaller -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledNode -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledCli -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledMarket -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledPnpm -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledMarketPolicy -PathType Leaf) -and
+            (($bundledRuntimeLicenses | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledRuntimeLicenses.Count) -and
             (Test-Path -LiteralPath $bundledPluginLock -PathType Leaf) -and
             (($bundledPlugins | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledPlugins.Count) -and
             $webReady

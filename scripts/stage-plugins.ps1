@@ -110,6 +110,16 @@ finally {
 }
 
 foreach ($plugin in $pluginLock.plugins) {
+    if ($plugin.source.type -eq 'local') {
+        $source = Assert-ProjectPath (Join-Path $projectRoot $plugin.source.path)
+        if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+            throw "Local plugin source is missing: $source"
+        }
+        $target = Assert-ProjectPath (Join-Path $resourceRoot ('node_modules\' + $plugin.package.Replace('/', '\')))
+        New-Item -ItemType Directory -Force -Path $target | Out-Null
+        Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
+        continue
+    }
     if ($plugin.source.type -ne 'github-tarball') {
         continue
     }
@@ -136,6 +146,14 @@ foreach ($plugin in $pluginLock.plugins | Where-Object { $_.source.type -eq 'git
         version = $plugin.version
         license = $plugin.license
         integrity = 'sha256-' + $plugin.source.sha256
+    }
+}
+foreach ($plugin in $pluginLock.plugins | Where-Object { $_.source.type -eq 'local' }) {
+    $licenses += [pscustomobject][ordered]@{
+        name = $plugin.package
+        version = $plugin.version
+        license = $plugin.license
+        integrity = 'local-' + $plugin.source.path
     }
 }
 $licenses | Sort-Object name, version -Unique | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $resourceRoot 'third-party-licenses.json') -Encoding utf8NoBOM

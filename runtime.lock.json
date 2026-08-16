@@ -11,6 +11,22 @@
     "package": "@deepseek-ai/dsh",
     "version": "0.1.0-rc.6",
     "integrity": "sha512-brpZfED7ieRa2PQ5tUxMhHrM1pb2CmKFVM/f6yMULBDMicahk+Z2OsHgTwTDnoiZm23Ftu9rQz0NN4pflaoJcg==",
+    "nodeRange": ">=22.13 <23",
     "cliEntry": "node_modules/@deepseek-ai/dsh/lib/bin.js"
+  },
+  "market": {
+    "package": "dshmarket",
+    "version": "1.6.0",
+    "integrity": "sha512-349LMeX8fG8t8PRQMOOPpXUJbTco0UrOWf0mSg0X3ZbLmrwX2dA21l40wU9nWTLfDv3/ZaCZ036dmbyoFVGm+w==",
+    "nodeRange": ">=22.13 <23",
+    "runtimeAlias": "dshmarket-desktop",
+    "bundlePatch": "node_modules/dshmarket/cordis.patch.yml"
+  },
+  "pnpm": {
+    "package": "pnpm",
+    "version": "11.22.0",
+    "integrity": "sha512-H/hwxMYTPf2I+yr8Rt0T1H8JyXlLQ4xv20fKmMrzvBY4HuC+k6CRuOOCTPAfiJ9G19niCRD7C+GrD7W6qA3WIQ==",
+    "nodeRange": ">=22.13",
+    "cliEntry": "node_modules/pnpm/bin/pnpm.mjs"
   }
 }

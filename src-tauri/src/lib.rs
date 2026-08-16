@@ -19,7 +19,7 @@ use desktop::{
     configure_close_to_tray, create_tray, open_external_url, quit_application, show_main_window,
 };
 use host::HostSupervisor;
-use lifecycle::{HostEvent, LifecycleAction, LifecycleStateMachine};
+use lifecycle::{HostCommand, HostController, HostEvent, LifecycleAction, LifecycleStateMachine};
 use logger::{log_app, log_error, log_file_path, log_host};
 use navigation::{decide_navigation, NavigationDecision};
 use plugins::{PluginManager, PluginTransaction};
@@ -54,6 +54,9 @@ pub fn run() {
                 app_handle
                     .state::<desktop::DesktopLifecycle>()
                     .request_quit();
+                if let Some(controller) = app_handle.try_state::<HostController>() {
+                    controller.mark_stopping();
+                }
                 if let Some(supervisor) = app_handle.try_state::<HostSupervisor>() {
                     supervisor.shutdown();
                 }
@@ -65,6 +68,8 @@ pub fn run() {
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
     app.manage(desktop::DesktopLifecycle::default());
+    let (host_controller, host_commands) = HostController::new();
+    app.manage(host_controller);
     let host_origin = Arc::new(RwLock::new(None::<url::Url>));
     let navigation_origin = host_origin.clone();
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
@@ -151,6 +156,7 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         host_origin,
         plugin_transaction,
         plugin_degraded_reason,
+        host_commands,
     );
     Ok(())
 }
@@ -230,6 +236,7 @@ fn spawn_boot_coordinator(
     host_origin: Arc<RwLock<Option<url::Url>>>,
     mut plugin_transaction: Option<PluginTransaction>,
     mut plugin_degraded_reason: Option<String>,
+    host_commands: mpsc::Receiver<HostCommand>,
 ) {
     std::thread::spawn(move || {
         let boot_started = Instant::now();
@@ -339,14 +346,11 @@ fn spawn_boot_coordinator(
             "host ready: {ready_url} (started in {} ms)",
             boot_started.elapsed().as_millis()
         ));
-        if let Ok(parsed) = ready_url.parse::<url::Url>() {
-            *host_origin
-                .write()
-                .unwrap_or_else(|error| error.into_inner()) = Some(parsed.clone());
-            if let Some(window) = handle.get_webview_window("main") {
-                let _ = window.navigate(parsed);
-            }
+        if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
+            fail(&handle, &message);
+            return;
         }
+        handle.state::<HostController>().mark_ready();
         if let Some(reason) = plugin_degraded_reason {
             let _ = handle
                 .dialog()
@@ -358,10 +362,49 @@ fn spawn_boot_coordinator(
                 .blocking_show();
         }
 
-        while let Ok(event) = receiver.recv() {
+        let mut active_receiver = Some(receiver);
+        loop {
             let shutting_down = handle.state::<desktop::DesktopLifecycle>().is_quitting();
-            match lifecycle.on_event(event, shutting_down) {
+            if shutting_down {
+                handle.state::<HostController>().mark_stopping();
+                return;
+            }
+
+            match host_commands.try_recv() {
+                Ok(HostCommand::Restart) => {
+                    match restart_host(&handle, &runtime, &host_origin) {
+                        Ok((next_receiver, next_lifecycle)) => {
+                            active_receiver = Some(next_receiver);
+                            lifecycle = next_lifecycle;
+                            handle.state::<HostController>().mark_ready();
+                        }
+                        Err(message) => {
+                            active_receiver = None;
+                            handle.state::<HostController>().mark_failed();
+                            report_restart_failure(&handle, &message);
+                        }
+                    }
+                    continue;
+                }
+                Err(mpsc::TryRecvError::Disconnected) => return,
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+
+            let Some(current_receiver) = active_receiver.as_ref() else {
+                std::thread::sleep(Duration::from_millis(200));
+                continue;
+            };
+            let event = match current_receiver.recv_timeout(Duration::from_millis(200)) {
+                Ok(event) => event,
+                Err(mpsc::RecvTimeoutError::Timeout) => continue,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    std::thread::sleep(Duration::from_millis(200));
+                    continue;
+                }
+            };
+            match lifecycle.on_event(event, false) {
                 LifecycleAction::Fail { message, .. } => {
+                    handle.state::<HostController>().mark_failed();
                     fail(&handle, &message);
                     return;
                 }
@@ -369,6 +412,59 @@ fn spawn_boot_coordinator(
             }
         }
     });
+}
+
+/// 串行停止当前 Host、启动新实例、等待就绪并把 WebView 导航到新端口。
+fn restart_host(
+    handle: &AppHandle,
+    runtime: &RuntimePaths,
+    host_origin: &Arc<RwLock<Option<url::Url>>>,
+) -> Result<(mpsc::Receiver<HostEvent>, LifecycleStateMachine), String> {
+    let previous_pid = handle.state::<HostSupervisor>().pid();
+    log_app(&format!("restarting host: previous_pid={previous_pid:?}"));
+    handle.state::<HostSupervisor>().shutdown();
+
+    let receiver = start_host_streams(handle, runtime)?;
+    let (lifecycle, ready_url) = await_host_ready(handle, &receiver, runtime.readiness_timeout)?;
+    navigate_to_host(handle, host_origin, &ready_url)?;
+    log_app(&format!(
+        "host restart ready: pid={:?}, url={ready_url}",
+        handle.state::<HostSupervisor>().pid()
+    ));
+    Ok((receiver, lifecycle))
+}
+
+/// 更新允许导航的 Host 原点，并将主窗口切换到新实例的实际地址。
+fn navigate_to_host(
+    handle: &AppHandle,
+    host_origin: &Arc<RwLock<Option<url::Url>>>,
+    ready_url: &str,
+) -> Result<(), String> {
+    let parsed = ready_url
+        .parse::<url::Url>()
+        .map_err(|error| format!("invalid Host ready URL: {error}"))?;
+    *host_origin
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = Some(parsed.clone());
+    if let Some(window) = handle.get_webview_window("main") {
+        window
+            .navigate(parsed)
+            .map_err(|error| format!("failed to navigate WebView to restarted Host: {error}"))?;
+    }
+    Ok(())
+}
+
+/// 记录重启失败并保留桌面托盘，使用户可以修复环境后再次尝试。
+fn report_restart_failure(handle: &AppHandle, message: &str) {
+    log_error(&format!("host restart failed: {message}"));
+    let _ = handle
+        .dialog()
+        .message(format!(
+            "DSH 服务重启失败。可以从托盘再次重试。\n\n{message}\n\n日志：{}",
+            log_file_path().display()
+        ))
+        .title("DSH 服务重启失败")
+        .blocking_show();
 }
 
 /// 等待一个 Host 实例首次就绪，并返回后续事件需要复用的状态机。
@@ -397,6 +493,9 @@ fn await_host_ready(
 
 /// 记录启动错误、显示诊断提示并以失败状态退出应用。
 fn fail(handle: &AppHandle, message: &str) {
+    if let Some(controller) = handle.try_state::<HostController>() {
+        controller.mark_failed();
+    }
     log_error(message);
     let log_path = log_file_path();
     let _ = handle

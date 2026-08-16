@@ -21,9 +21,45 @@ if ((Get-FileHash -LiteralPath $trackedLock -Algorithm SHA256).Hash -ne (Get-Fil
 }
 
 $lock = Get-Content -LiteralPath $resourceLock -Raw | ConvertFrom-Json
-$expectedOrder = @('dsh-at-file', '@omdsh-dev/dsh-genui', 'dsh-better-sidebar', '@linxin666/dsh-skins')
+$expectedOrder = @(
+    'dsh-at-file',
+    '@omdsh-dev/dsh-genui',
+    'dsh-better-sidebar',
+    '@dsh-desktop/theme-settings',
+    '@linxin666/dsh-skins',
+    '@vectorize-io/hindsight-coding-agents',
+    '@liustack/modlens',
+    '@zebbkira/dsh-skills-mcp-manager'
+)
 if (($lock.plugins.package -join '|') -ne ($expectedOrder -join '|')) {
     throw "Managed plugin order is invalid: $($lock.plugins.package -join ', ')"
+}
+
+$themeClient = Join-Path $resourceRootPath 'node_modules\@dsh-desktop\theme-settings\lib\client.js'
+$themeSource = Get-Content -LiteralPath $themeClient -Raw
+foreach ($marker in @('id: "desktop-theme"', '"web-ui.plugin.item"', 'renderSlot("web-ui.plugin.item"')) {
+    if (-not $themeSource.Contains($marker)) {
+        throw "Desktop theme adapter is missing required client marker: $marker"
+    }
+}
+$themeHost = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\theme-settings\lib\index.js') -Raw
+foreach ($marker in @('/api/desktop-managed-plugins', 'PROTECTED_BUNDLES', 'atomicWriteProfile', 'serializeWrite')) {
+    if (-not $themeHost.Contains($marker)) {
+        throw "Desktop managed-plugin API is missing required host marker: $marker"
+    }
+}
+
+foreach ($skill in $lock.skills) {
+    $source = Join-Path $resourceRootPath (
+        'node_modules\' + $skill.sourcePackage.Replace('/', '\') + '\' + $skill.sourceFile
+    )
+    if (-not (Test-Path -LiteralPath $source -PathType Leaf)) {
+        throw "Managed Skill source is missing: $source"
+    }
+    $actual = (Get-FileHash -LiteralPath $source -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($actual -ne $skill.sha256.ToLowerInvariant()) {
+        throw "Managed Skill SHA-256 mismatch for $($skill.name). Expected $($skill.sha256), got $actual."
+    }
 }
 
 foreach ($plugin in $lock.plugins) {
@@ -47,9 +83,10 @@ foreach ($plugin in $lock.plugins) {
 }
 
 # 插件必须复用内置 DSH 的完整 peer closure，禁止夹带第二套官方包。
-$deepseekCopies = Join-Path $resourceRootPath 'node_modules\@deepseek-ai'
-if (Test-Path -LiteralPath $deepseekCopies) {
-    throw "Plugin runtime must not contain @deepseek-ai package copies: $deepseekCopies"
+$deepseekCopies = @(Get-ChildItem -LiteralPath (Join-Path $resourceRootPath 'node_modules') -Directory -Recurse -Force |
+    Where-Object { $_.Name -eq '@deepseek-ai' })
+if ($deepseekCopies.Count -gt 0) {
+    throw "Plugin runtime must not contain @deepseek-ai package copies: $($deepseekCopies[0].FullName)"
 }
 
 $packageLock = Get-Content -LiteralPath (Join-Path $resourceRootPath 'package-lock.json') -Raw | ConvertFrom-Json -AsHashtable
@@ -83,4 +120,10 @@ $licenseManifest = @(Get-Content -LiteralPath (Join-Path $resourceRootPath 'thir
 if ($licenseManifest.Count -eq 0) {
     throw 'Plugin third-party license manifest is empty.'
 }
-Write-Host "Plugins valid: $($lock.plugins.Count) managed bundles, PTY $($ptyBinary.Name), $($licenseManifest.Count) licensed packages."
+$licensedNames = @($licenseManifest | ForEach-Object { $_.name })
+foreach ($plugin in $lock.plugins) {
+    if ($plugin.package -notin $licensedNames) {
+        throw "Plugin is missing from third-party license manifest: $($plugin.package)"
+    }
+}
+Write-Host "Plugins valid: $($lock.plugins.Count) managed bundles, $($lock.skills.Count) managed Skills, PTY $($ptyBinary.Name), $($licenseManifest.Count) licensed packages."

@@ -8,9 +8,11 @@ use tauri::tray::{MouseButton, TrayIconBuilder, TrayIconEvent};
 use tauri::{App, AppHandle, Manager, WebviewWindow, WindowEvent};
 use tauri_plugin_dialog::DialogExt;
 
-use crate::logger::{log_app, log_file_path};
+use crate::lifecycle::HostController;
+use crate::logger::{log_app, log_error, log_file_path};
 
 const MENU_OPEN: &str = "open-main";
+const MENU_RESTART: &str = "restart-host";
 const MENU_LOG: &str = "open-log";
 const MENU_ABOUT: &str = "about";
 const MENU_QUIT: &str = "quit";
@@ -48,13 +50,14 @@ pub fn configure_close_to_tray(window: &WebviewWindow) {
     });
 }
 
-/// 创建带打开、日志、关于和退出命令的原生托盘。
+/// 创建带打开、重启 Host、日志、关于和退出命令的原生托盘。
 pub fn create_tray(app: &App) -> tauri::Result<()> {
     let open = MenuItem::with_id(app, MENU_OPEN, "打开主窗口", true, None::<&str>)?;
+    let restart = MenuItem::with_id(app, MENU_RESTART, "重启 DSH 服务", true, None::<&str>)?;
     let log = MenuItem::with_id(app, MENU_LOG, "打开日志", true, None::<&str>)?;
     let about = MenuItem::with_id(app, MENU_ABOUT, "关于", true, None::<&str>)?;
     let quit = MenuItem::with_id(app, MENU_QUIT, "退出", true, None::<&str>)?;
-    let menu = Menu::with_items(app, &[&open, &log, &about, &quit])?;
+    let menu = Menu::with_items(app, &[&open, &restart, &log, &about, &quit])?;
 
     let mut builder = TrayIconBuilder::with_id("main-tray")
         .menu(&menu)
@@ -62,6 +65,7 @@ pub fn create_tray(app: &App) -> tauri::Result<()> {
         .tooltip("DeepSeek Harness Desktop")
         .on_menu_event(|app, event| match event.id().as_ref() {
             MENU_OPEN => show_main_window(app),
+            MENU_RESTART => request_host_restart(app),
             MENU_LOG => open_log_file(),
             MENU_ABOUT => show_about(app),
             MENU_QUIT => quit_application(app),
@@ -83,6 +87,25 @@ pub fn create_tray(app: &App) -> tauri::Result<()> {
     }
     builder.build(app)?;
     Ok(())
+}
+
+/// 将托盘重启请求交给桌面 Host 控制器，状态冲突时向用户给出明确提示。
+fn request_host_restart(app: &AppHandle) {
+    let Some(controller) = app.try_state::<HostController>() else {
+        log_error("host controller is unavailable");
+        return;
+    };
+    match controller.restart() {
+        Ok(()) => log_app("host restart requested from tray"),
+        Err(message) => {
+            log_error(&format!("host restart request rejected: {message}"));
+            let _ = app
+                .dialog()
+                .message("DSH 服务当前正在启动、重启或退出，请稍后再试。")
+                .title("无法重启 DSH 服务")
+                .blocking_show();
+        }
+    }
 }
 
 /// 恢复主窗口并将输入焦点交给它，供托盘和二次启动复用。
@@ -124,7 +147,7 @@ fn show_about(app: &AppHandle) {
     let _ = app
         .dialog()
         .message(format!(
-            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skins 0.1.16\n\n侧栏可访问文件、Git 和 PTY；皮肤中心可写 DSH 配置；GenUI action 会回传模型。",
+            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6、DSH Market 1.6.0、pnpm 11.22.0\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skins 0.1.16\n\n第三方插件与桌面应用拥有相同主机权限，目前没有签名验证、权限清单或进程级沙箱。",
             app.package_info().version
         ))
         .title("关于 DeepSeek Harness Desktop")
