@@ -4,6 +4,9 @@
 
 ## 本版内容
 
+- 修复 `dshmarket-desktop` 客户端仍以 `dshmarket` 注册，导致打包应用启动时报
+  `loaded without registering "dshmarket-desktop"` 的问题。桌面 runtime 现在生成注册名适配副本，
+  staging 会严格校验除注册 ID 外的内容与上游 Market 完全一致。
 - 启动页改为离线 DeepSeek“数字深海”动画，包含鲸鱼标志、五层汇聚粒子波、呼吸光源、
   极弱扩散光波和精简启动状态；支持最小窗口与 `prefers-reduced-motion`。
 - 内置 Node.js `22.22.3` 与 `@deepseek-ai/dsh 0.1.0-rc.6`，首次启动无需联网。
