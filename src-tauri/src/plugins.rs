@@ -198,7 +198,7 @@ impl PluginManager {
             paths.dsh_home.clone(),
             paths.web_profile.clone(),
             paths.managed_plugins_root.clone(),
-            paths.host_root.join("node_modules/dshmarket"),
+            paths.host_root.join("node_modules/dshmarket-desktop"),
             paths.user_home.clone(),
             Arc::new(SystemDirectoryLinker {
                 node: paths.node.clone(),
@@ -440,7 +440,7 @@ impl PluginManager {
         atomic_write_json(&profile_path, &profile)
     }
 
-    /// 将桌面私有模块别名指向安装根 Market，避免用户同名依赖覆盖活动版本。
+    /// 将桌面私有模块别名指向注册名已适配的 Market 副本，避免用户同名依赖覆盖活动版本。
     fn ensure_market_runtime_alias(&self) -> Result<(), String> {
         if !self.market_root.join("package.json").is_file() {
             return Err(format!(
@@ -1961,7 +1961,9 @@ mod tests {
         let dsh_home = root.path().join("home/.dsh");
         let web_profile = dsh_home.join("profiles/web");
         let managed = dsh_home.join("profiles/node_modules/.dsh-desktop");
-        let market_root = root.path().join("runtime/host/node_modules/dshmarket");
+        let market_root = root
+            .path()
+            .join("runtime/host/node_modules/dshmarket-desktop");
         root.write(
             "resources/plugins/plugins.lock.json",
             br#"{
@@ -1984,8 +1986,8 @@ mod tests {
             b"- insert: []",
         );
         root.write(
-            "runtime/host/node_modules/dshmarket/package.json",
-            br#"{"name":"dshmarket","version":"1.6.0"}"#,
+            "runtime/host/node_modules/dshmarket-desktop/package.json",
+            br#"{"name":"dshmarket-desktop","version":"1.6.0"}"#,
         );
         let linker = Arc::new(FakeLinker::default());
         let manager = PluginManager::with_linker(
@@ -2038,15 +2040,16 @@ mod tests {
             b"export {}",
         );
         root.write(
-            "runtime/host/node_modules/dshmarket/package.json",
-            br#"{"name":"dshmarket","version":"1.6.0"}"#,
+            "runtime/host/node_modules/dshmarket-desktop/package.json",
+            br#"{"name":"dshmarket-desktop","version":"1.6.0"}"#,
         );
         let manager = PluginManager::with_linker(
             resources,
             dsh_home.clone(),
             dsh_home.join("profiles/web"),
             dsh_home.join("profiles/node_modules/.dsh-desktop"),
-            root.path().join("runtime/host/node_modules/dshmarket"),
+            root.path()
+                .join("runtime/host/node_modules/dshmarket-desktop"),
             root.path().join("home"),
             Arc::new(FakeLinker::default()),
         );
@@ -2067,6 +2070,26 @@ mod tests {
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .exists());
         assert_eq!(linker.links.lock().unwrap().len(), 2);
+        let market_link_target = linker
+            .links
+            .lock()
+            .unwrap()
+            .get(
+                &root
+                    .path()
+                    .join("home/.dsh/profiles/node_modules/dshmarket-desktop"),
+            )
+            .cloned();
+        assert_eq!(
+            market_link_target,
+            Some(
+                fs::canonicalize(
+                    root.path()
+                        .join("runtime/host/node_modules/dshmarket-desktop")
+                )
+                .unwrap()
+            )
+        );
 
         transaction.commit().unwrap();
         assert!(root
@@ -2185,7 +2208,8 @@ mod tests {
             dsh_home.clone(),
             web_profile,
             dsh_home.join("profiles/node_modules/.dsh-desktop"),
-            root.path().join("runtime/host/node_modules/dshmarket"),
+            root.path()
+                .join("runtime/host/node_modules/dshmarket-desktop"),
             root.path().join("home"),
             linker.clone(),
         );

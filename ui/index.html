@@ -5,13 +5,25 @@
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>DeepSeek Harness Desktop</title>
   <link rel="stylesheet" href="styles.css" />
+  <script src="splash.js" defer></script>
 </head>
 <body>
-  <div class="box">
-    <div class="spinner"></div>
-    <div>正在启动 DeepSeek Harness...</div>
-    <p>首次启动通常需要 5–30 秒。如果长时间停留在此页，请查看
-      %LOCALAPPDATA%\dsh-desktop\dsh-desktop.log 中的 host 日志。</p>
-  </div>
+  <main class="splash" aria-labelledby="product-name">
+    <canvas id="digital-ocean" aria-hidden="true"></canvas>
+    <div class="brand">
+      <img class="brand-mark" src="whale.png" alt="DeepSeek 鲸鱼标志" />
+      <h1 id="product-name">deepseek</h1>
+      <div class="product-line" aria-label="Harness Desktop">
+        <span></span>
+        <strong>HARNESS DESKTOP</strong>
+        <span></span>
+      </div>
+    </div>
+
+    <div class="startup-status" role="status" aria-live="polite">
+      <div class="spinner" aria-hidden="true"></div>
+      <div class="status-text">正在启动<span class="dots"><i></i><i></i><i></i></span></div>
+    </div>
+  </main>
 </body>
 </html>

@@ -99,6 +99,31 @@ finally {
     Pop-Location
 }
 
+$marketSourceRoot = Join-Path $hostResourceRoot 'node_modules\dshmarket'
+$marketAliasRoot = Join-Path $hostResourceRoot ("node_modules\$($runtimeLock.market.runtimeAlias)")
+$marketAliasRoot = Assert-ProjectPath $marketAliasRoot
+if (Test-Path -LiteralPath $marketAliasRoot) {
+    Remove-Item -LiteralPath $marketAliasRoot -Recurse -Force
+}
+Copy-Item -LiteralPath $marketSourceRoot -Destination $marketAliasRoot -Recurse
+
+# DSH 客户端模块以活动 Cordis entry 名作为严格注册 ID；桌面私有别名必须同步改写预构建 bundle。
+$aliasPackagePath = Join-Path $marketAliasRoot 'package.json'
+$aliasPackage = Get-Content -LiteralPath $aliasPackagePath -Raw | ConvertFrom-Json
+$aliasPackage.name = $runtimeLock.market.runtimeAlias
+$aliasPackage | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $aliasPackagePath -Encoding utf8NoBOM
+
+$sourceClientPath = Join-Path $marketSourceRoot 'client\client.js'
+$aliasClientPath = Join-Path $marketAliasRoot 'client\client.js'
+$sourceClient = Get-Content -LiteralPath $sourceClientPath -Raw
+$sourceRegistration = 'window.__ModuleLoader__.load({ id: "dshmarket", factory:'
+$aliasRegistration = "window.__ModuleLoader__.load({ id: `"$($runtimeLock.market.runtimeAlias)`", factory:"
+if (-not $sourceClient.StartsWith($sourceRegistration, [System.StringComparison]::Ordinal)) {
+    throw 'Bundled Market client registration banner is not the expected dshmarket form.'
+}
+$aliasClient = $aliasRegistration + $sourceClient.Substring($sourceRegistration.Length)
+Set-Content -LiteralPath $aliasClientPath -Value $aliasClient -Encoding utf8NoBOM -NoNewline
+
 Copy-Item -LiteralPath $lockPath -Destination (Join-Path $hostResourceRoot 'runtime.lock.json')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $hostResourceRoot
 

@@ -1,6 +1,6 @@
 {
   "name": "@dsh-desktop/theme-settings",
-  "version": "0.1.0-preview.3",
+  "version": "0.1.0-preview.4",
   "description": "Desktop-owned settings adapter for managed plugin toggles and the upstream DSH Skin Center",
   "license": "MIT",
   "type": "module",

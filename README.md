@@ -25,7 +25,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.3` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.4` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -45,7 +45,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.3` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.4` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -69,8 +69,8 @@ GenUI 的锁定 `SKILL.md` 首次启动会写入 `$DSH_HOME/skills/genui/SKILL.m
 DSH Market `1.6.0` 作为桌面运行时 bundle 固定交付，不写入用户 profile dependencies，也不能由
 市场升级或卸载。它使用 curated registry 搜索插件，并通过内置 DSH CLI 与私有 pnpm 在
 `~/.dsh/profiles/web` 安装、更新和卸载用户插件；离线可浏览内置快照，但安装、更新和可靠的版本检查需要网络。
-桌面端使用安装根私有模块别名加载 Market，因此用户 profile 中已有的同名依赖会原样保留，
-但不会覆盖当前桌面发行版的活动 Market 版本。
+桌面端使用安装根私有模块别名加载 Market，并在构建时只适配严格客户端注册 ID；因此用户 profile
+中已有的同名依赖会原样保留，但不会覆盖当前桌面发行版的活动 Market 版本。
 
 第三方插件与桌面应用拥有相同主机权限，目前没有包签名验证、权限清单或进程级沙箱。npm
 预构建包可以直接安装；需要 `prepare`、`allowBuilds` 等脚本的 GitHub 源必须逐包明确确认。

@@ -2,7 +2,7 @@
 
 ## 代码与依赖
 
-- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.3`。
+- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.4`。
 - [ ] `runtime.lock.json`、Node SHA-256、DSH、DSH Market 与 pnpm package lock 完全匹配。
 - [ ] `plugins.lock.json`、GitHub 归档 SHA-256、npm integrity 与插件 package lock 完全匹配。
 - [ ] staged 边界不包含 `resources`、`.runtime-cache`、`target`、日志、本机路径或安装包。
@@ -15,12 +15,14 @@
 - [ ] fake Host 冒烟验证就绪、单实例、关闭到托盘和显式退出。
 - [ ] 安装器冒烟验证安装、内置运行时启动、生命周期、卸载和无残留进程。
 - [ ] 缺少任一内置运行时关键文件时构建失败。
+- [ ] `dshmarket-desktop` 客户端注册 ID 与活动 Cordis entry 一致，且其余 bundle 字节与上游 Market 相同。
 - [ ] `dsh --profile web --dump-config --patch policy/dsh-market.patch.yml` 中裸 `dsh-market` 层已禁用，仅桌面别名层处于活动状态，且 `profile=web`、`allowRestart=false`。
 - [ ] 托盘重启后 PID 和动态端口更新，WebView 恢复且不误报旧 Host 异常退出。
 - [ ] 8 个托管 bundle、GenUI Skill、Skin Center、关键客户端资产和 Windows x64 PTY 缺少任一文件时构建失败。
 - [ ] “预置插件”只修改 web profile bundles；受保护和未知 bundle 均被拒绝，并发写不丢更新。
 - [ ] “主题”一级入口可列出皮肤，试穿、应用、恢复默认与重启持久化通过。
 - [ ] Hindsight 未 opt-in 时无请求；ModLens 与 Skills/MCP Manager 完成配置后可用。
+- [ ] 启动页无脚本错误，Canvas 非空且持续运动，1280x800 与 960x600 无文字或控件重叠。
 
 ## 发布产物
 

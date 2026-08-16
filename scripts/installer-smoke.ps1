@@ -19,6 +19,10 @@ $uninstaller = Join-Path $installRoot 'uninstall.exe'
 $bundledNode = Join-Path $installRoot 'node\node.exe'
 $bundledCli = Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh\lib\bin.js'
 $bundledMarket = Join-Path $installRoot 'host\node_modules\dshmarket\package.json'
+$bundledMarketAlias = @(
+    (Join-Path $installRoot 'host\node_modules\dshmarket-desktop\package.json'),
+    (Join-Path $installRoot 'host\node_modules\dshmarket-desktop\client\client.js')
+)
 $bundledPnpm = Join-Path $installRoot 'host\node_modules\.bin\pnpm.cmd'
 $bundledMarketPolicy = Join-Path $installRoot 'policy\dsh-market.patch.yml'
 $bundledRuntimeLicenses = @(
@@ -75,6 +79,7 @@ try {
             (Test-Path -LiteralPath $bundledNode -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledCli -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledMarket -PathType Leaf) -and
+            (($bundledMarketAlias | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledMarketAlias.Count) -and
             (Test-Path -LiteralPath $bundledPnpm -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledMarketPolicy -PathType Leaf) -and
             (($bundledRuntimeLicenses | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledRuntimeLicenses.Count) -and

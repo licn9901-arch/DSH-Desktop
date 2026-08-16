@@ -19,6 +19,7 @@ $nodePath = Join-Path $nodeRoot 'node.exe'
 $cliPath = Join-Path $hostRoot $runtimeLock.dsh.cliEntry
 $dshRoot = Join-Path $hostRoot 'node_modules\@deepseek-ai\dsh'
 $marketRoot = Join-Path $hostRoot 'node_modules\dshmarket'
+$marketAliasRoot = Join-Path $hostRoot ("node_modules\$($runtimeLock.market.runtimeAlias)")
 $pnpmRoot = Join-Path $hostRoot 'node_modules\pnpm'
 $policyPath = Join-Path $resourceRootPath 'policy\dsh-market.patch.yml'
 $webCandidates = @(
@@ -40,6 +41,10 @@ $requiredFiles = @(
     (Join-Path $marketRoot 'package.json'),
     (Join-Path $marketRoot 'LICENSE'),
     (Join-Path $marketRoot 'cordis.patch.yml'),
+    (Join-Path $marketAliasRoot 'package.json'),
+    (Join-Path $marketAliasRoot 'LICENSE'),
+    (Join-Path $marketAliasRoot 'lib\index.js'),
+    (Join-Path $marketAliasRoot 'client\client.js'),
     (Join-Path $pnpmRoot 'package.json'),
     (Join-Path $pnpmRoot 'LICENSE'),
     (Join-Path $pnpmRoot 'bin\pnpm.mjs'),
@@ -100,6 +105,21 @@ if ($marketPackage.name -ne $runtimeLock.market.package -or
     $lockedMarket['version'] -ne $runtimeLock.market.version -or
     $lockedMarket['integrity'] -ne $runtimeLock.market.integrity) {
     throw 'Bundled DSH Market does not match runtime.lock.json.'
+}
+
+$marketAliasPackage = Get-Content -LiteralPath (Join-Path $marketAliasRoot 'package.json') -Raw | ConvertFrom-Json
+if ($marketAliasPackage.name -ne $runtimeLock.market.runtimeAlias -or
+    $marketAliasPackage.version -ne $runtimeLock.market.version) {
+    throw 'Desktop Market alias package identity does not match runtime.lock.json.'
+}
+$sourceClient = Get-Content -LiteralPath (Join-Path $marketRoot 'client\client.js') -Raw
+$aliasClient = Get-Content -LiteralPath (Join-Path $marketAliasRoot 'client\client.js') -Raw
+$sourceRegistration = 'window.__ModuleLoader__.load({ id: "dshmarket", factory:'
+$aliasRegistration = "window.__ModuleLoader__.load({ id: `"$($runtimeLock.market.runtimeAlias)`", factory:"
+if (-not $sourceClient.StartsWith($sourceRegistration, [System.StringComparison]::Ordinal) -or
+    -not $aliasClient.StartsWith($aliasRegistration, [System.StringComparison]::Ordinal) -or
+    $sourceClient.Substring($sourceRegistration.Length) -cne $aliasClient.Substring($aliasRegistration.Length)) {
+    throw 'Desktop Market client must differ from upstream only by the strict module registration ID.'
 }
 
 $pnpmPackage = Get-Content -LiteralPath (Join-Path $pnpmRoot 'package.json') -Raw | ConvertFrom-Json

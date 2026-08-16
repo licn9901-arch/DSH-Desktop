@@ -86,7 +86,7 @@
     },
     {
       "package": "@dsh-desktop/theme-settings",
-      "version": "0.1.0-preview.3",
+      "version": "0.1.0-preview.4",
       "bundleId": "desktop-theme-settings",
       "license": "MIT",
       "source": {
