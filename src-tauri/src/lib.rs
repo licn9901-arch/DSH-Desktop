@@ -136,6 +136,13 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
                     return Ok(());
                 }
             }
+            if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
+                fail(
+                    &handle,
+                    &format!("{plugin_error}; skin patch repair failed: {repair}"),
+                );
+                return Ok(());
+            }
             match start_host_streams(&handle, &runtime) {
                 Ok(receiver) => receiver,
                 Err(message) => {
@@ -176,6 +183,13 @@ fn start_host_streams(
     spawn_stderr_reader(stderr);
     spawn_exit_watcher(handle.clone(), sender, pid);
     Ok(receiver)
+}
+
+/// core retry 前再次执行已知 Skin patch 迁移，避免回滚或运行期写入留下非法 YAML。
+fn repair_skin_patch_before_core_retry(runtime: &RuntimePaths) -> Result<(), String> {
+    PluginManager::new(runtime)
+        .repair_legacy_skin_patch()
+        .map(|_| ())
 }
 
 /// 持续排空 Host stdout，并把第一条就绪地址发送给启动协调线程。
@@ -262,6 +276,13 @@ fn spawn_boot_coordinator(
                         return;
                     }
                 }
+                if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
+                    fail(
+                        &handle,
+                        &format!("{plugin_error}; skin patch repair failed: {repair}"),
+                    );
+                    return;
+                }
                 receiver = match start_host_streams(&handle, &runtime) {
                     Ok(receiver) => receiver,
                     Err(core_error) => {
@@ -311,6 +332,13 @@ fn spawn_boot_coordinator(
                             );
                             return;
                         }
+                    }
+                    if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
+                        fail(
+                            &handle,
+                            &format!("{plugin_error}; skin patch repair failed: {repair}"),
+                        );
+                        return;
                     }
                     receiver = match start_host_streams(&handle, &runtime) {
                         Ok(receiver) => receiver,
@@ -423,6 +451,7 @@ fn restart_host(
     let previous_pid = handle.state::<HostSupervisor>().pid();
     log_app(&format!("restarting host: previous_pid={previous_pid:?}"));
     handle.state::<HostSupervisor>().shutdown();
+    repair_skin_patch_before_core_retry(runtime)?;
 
     let receiver = start_host_streams(handle, runtime)?;
     let (lifecycle, ready_url) = await_host_ready(handle, &receiver, runtime.readiness_timeout)?;

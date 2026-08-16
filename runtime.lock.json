@@ -16,12 +16,23 @@
   },
   "market": {
     "package": "dshmarket",
-    "version": "1.6.0",
-    "integrity": "sha512-349LMeX8fG8t8PRQMOOPpXUJbTco0UrOWf0mSg0X3ZbLmrwX2dA21l40wU9nWTLfDv3/ZaCZ036dmbyoFVGm+w==",
+    "version": "1.9.0",
+    "integrity": "sha512-WUeo31GkItN1V2P3Uo8IwMqLzApws7Sk7Q8/1zPMy5tgDCJG3SmZlfSNeG/2uzfygPmnAOI4hjZ6MAqC2k+IVw==",
     "nodeRange": ">=22.13 <23",
-    "runtimeAlias": "dshmarket-desktop",
     "bundlePatch": "node_modules/dshmarket/cordis.patch.yml"
   },
+  "pnpmToolchains": [
+    {
+      "package": "pnpm-9",
+      "version": "9.15.9",
+      "integrity": "sha512-aARhQYk8ZvrQHAeSMRKOmvuJ74fiaR1p5NQO7iKJiClf1GghgbrlW1hBjDolO95lpQXsfF+UA+zlzDzTfc8lMQ=="
+    },
+    {
+      "package": "pnpm-10",
+      "version": "10.33.2",
+      "integrity": "sha512-qQ+vb+6rca1sblf5Tg/hoS9dzCLNdU20CulZPraj4LaxLjVAIYuzeuCDQEsfLObbKkEh6XmCm0r/lLmfSdoc+A=="
+    }
+  ],
   "pnpm": {
     "package": "pnpm",
     "version": "11.22.0",

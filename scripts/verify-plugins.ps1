@@ -22,6 +22,7 @@ if ((Get-FileHash -LiteralPath $trackedLock -Algorithm SHA256).Hash -ne (Get-Fil
 
 $lock = Get-Content -LiteralPath $resourceLock -Raw | ConvertFrom-Json
 $expectedOrder = @(
+    '@dsh-desktop/runtime-services',
     'dsh-at-file',
     '@omdsh-dev/dsh-genui',
     'dsh-better-sidebar',
@@ -29,7 +30,7 @@ $expectedOrder = @(
     '@linxin666/dsh-skins',
     '@vectorize-io/hindsight-coding-agents',
     '@liustack/modlens',
-    '@zebbkira/dsh-skills-mcp-manager'
+    '@cubee-slide/skills-mcp-manager'
 )
 if (($lock.plugins.package -join '|') -ne ($expectedOrder -join '|')) {
     throw "Managed plugin order is invalid: $($lock.plugins.package -join ', ')"
@@ -47,6 +48,24 @@ foreach ($marker in @('/api/desktop-managed-plugins', 'PROTECTED_BUNDLES', 'atom
     if (-not $themeHost.Contains($marker)) {
         throw "Desktop managed-plugin API is missing required host marker: $marker"
     }
+}
+$runtimeServices = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\runtime-services\lib\index.js') -Raw
+foreach ($marker in @('ctx.provide("desktopProfiles"', 'ctx.provide("desktopPnpm"', 'unsupported profile pnpm major')) {
+    if (-not $runtimeServices.Contains($marker)) {
+        throw "Desktop Runtime Services is missing required marker: $marker"
+    }
+}
+
+$skillsMcpRoot = Join-Path $resourceRootPath 'node_modules\@cubee-slide\skills-mcp-manager'
+$skillsMcpClient = Get-Content -LiteralPath (Join-Path $skillsMcpRoot 'lib\client.js') -Raw
+foreach ($forbidden in @('require("lucide-react")', "from 'lucide-react'", 'from "lucide-react"')) {
+    if ($skillsMcpClient.Contains($forbidden)) {
+        throw "Skills/MCP client must inline lucide-react; found external import: $forbidden"
+    }
+}
+$skillsMcpPatch = Get-Content -LiteralPath (Join-Path $skillsMcpRoot 'cordis.patch.yml') -Raw
+if (-not $skillsMcpPatch.Contains('@cubee-slide/skills-mcp-manager')) {
+    throw 'Skills/MCP Cordis patch does not reference the published package name.'
 }
 
 foreach ($skill in $lock.skills) {

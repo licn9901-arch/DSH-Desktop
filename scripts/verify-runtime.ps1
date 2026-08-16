@@ -19,7 +19,6 @@ $nodePath = Join-Path $nodeRoot 'node.exe'
 $cliPath = Join-Path $hostRoot $runtimeLock.dsh.cliEntry
 $dshRoot = Join-Path $hostRoot 'node_modules\@deepseek-ai\dsh'
 $marketRoot = Join-Path $hostRoot 'node_modules\dshmarket'
-$marketAliasRoot = Join-Path $hostRoot ("node_modules\$($runtimeLock.market.runtimeAlias)")
 $pnpmRoot = Join-Path $hostRoot 'node_modules\pnpm'
 $policyPath = Join-Path $resourceRootPath 'policy\dsh-market.patch.yml'
 $webCandidates = @(
@@ -41,14 +40,13 @@ $requiredFiles = @(
     (Join-Path $marketRoot 'package.json'),
     (Join-Path $marketRoot 'LICENSE'),
     (Join-Path $marketRoot 'cordis.patch.yml'),
-    (Join-Path $marketAliasRoot 'package.json'),
-    (Join-Path $marketAliasRoot 'LICENSE'),
-    (Join-Path $marketAliasRoot 'lib\index.js'),
-    (Join-Path $marketAliasRoot 'client\client.js'),
     (Join-Path $pnpmRoot 'package.json'),
     (Join-Path $pnpmRoot 'LICENSE'),
     (Join-Path $pnpmRoot 'bin\pnpm.mjs'),
     (Join-Path $hostRoot 'node_modules\.bin\pnpm.cmd'),
+    (Join-Path $hostRoot 'toolchains\pnpm-9\pnpm.cmd'),
+    (Join-Path $hostRoot 'toolchains\pnpm-10\pnpm.cmd'),
+    (Join-Path $hostRoot 'toolchains\pnpm-11\pnpm.cmd'),
     $policyPath,
     (Join-Path $webRoot 'dist\index.html'),
     (Join-Path $webRoot 'LICENSE'),
@@ -107,19 +105,10 @@ if ($marketPackage.name -ne $runtimeLock.market.package -or
     throw 'Bundled DSH Market does not match runtime.lock.json.'
 }
 
-$marketAliasPackage = Get-Content -LiteralPath (Join-Path $marketAliasRoot 'package.json') -Raw | ConvertFrom-Json
-if ($marketAliasPackage.name -ne $runtimeLock.market.runtimeAlias -or
-    $marketAliasPackage.version -ne $runtimeLock.market.version) {
-    throw 'Desktop Market alias package identity does not match runtime.lock.json.'
-}
 $sourceClient = Get-Content -LiteralPath (Join-Path $marketRoot 'client\client.js') -Raw
-$aliasClient = Get-Content -LiteralPath (Join-Path $marketAliasRoot 'client\client.js') -Raw
 $sourceRegistration = 'window.__ModuleLoader__.load({ id: "dshmarket", factory:'
-$aliasRegistration = "window.__ModuleLoader__.load({ id: `"$($runtimeLock.market.runtimeAlias)`", factory:"
-if (-not $sourceClient.StartsWith($sourceRegistration, [System.StringComparison]::Ordinal) -or
-    -not $aliasClient.StartsWith($aliasRegistration, [System.StringComparison]::Ordinal) -or
-    $sourceClient.Substring($sourceRegistration.Length) -cne $aliasClient.Substring($aliasRegistration.Length)) {
-    throw 'Desktop Market client must differ from upstream only by the strict module registration ID.'
+if (-not $sourceClient.StartsWith($sourceRegistration, [System.StringComparison]::Ordinal)) {
+    throw 'Bundled Market client must keep the upstream dshmarket registration ID.'
 }
 
 $pnpmPackage = Get-Content -LiteralPath (Join-Path $pnpmRoot 'package.json') -Raw | ConvertFrom-Json
@@ -133,15 +122,22 @@ if ($pnpmPackage.name -ne $runtimeLock.pnpm.package -or
 if ($pnpmPackage.engines.node -ne $runtimeLock.pnpm.nodeRange) {
     throw "Bundled pnpm Node compatibility mismatch: $($pnpmPackage.engines.node)"
 }
+foreach ($toolchain in $runtimeLock.pnpmToolchains) {
+    $entry = $hostLock['packages']['node_modules/' + $toolchain.package]
+    $packagePath = Join-Path $hostRoot ('node_modules\' + $toolchain.package + '\package.json')
+    $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
+    if ($package.version -ne $toolchain.version -or
+        $entry['version'] -ne $toolchain.version -or
+        $entry['integrity'] -ne $toolchain.integrity) {
+        throw "Bundled $($toolchain.package) does not match runtime.lock.json."
+    }
+}
 
 $policy = Get-Content -LiteralPath $policyPath -Raw
-if ($runtimeLock.market.runtimeAlias -ne 'dshmarket-desktop' -or
-    $policy -notmatch '(?ms)^- id:\s*dsh-market\s+name:\s*dshmarket\s+disabled:\s*true\s*$' -or
-    $policy -notmatch '(?m)^\s*- id:\s*dsh-market-desktop\s*$' -or
-    $policy -notmatch '(?m)^\s*name:\s*dshmarket-desktop\s*$' -or
+if ($policy -notmatch '(?m)^- id:\s*dsh-market\s*$' -or
     $policy -notmatch '(?m)^\s*profile:\s*web\s*$' -or
     $policy -notmatch '(?m)^\s*allowRestart:\s*false\s*$') {
-    throw 'Desktop DSH Market policy must disable the bare package row and activate the private alias with profile=web and allowRestart=false.'
+    throw 'Desktop DSH Market policy must configure the upstream dsh-market entry with profile=web and allowRestart=false.'
 }
 
 $webPackage = Get-Content -LiteralPath (Join-Path $webRoot 'package.json') -Raw | ConvertFrom-Json

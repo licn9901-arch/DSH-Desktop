@@ -2,6 +2,7 @@
 
 use std::env;
 use std::ffi::{OsStr, OsString};
+use std::fs;
 use std::io;
 use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
@@ -12,6 +13,8 @@ use std::os::windows::process::CommandExt;
 
 use crate::logger::{log_app, log_error};
 use crate::runtime::RuntimePaths;
+
+const HINDSIGHT_CREDENTIAL_REF: &str = "DSH_DESKTOP_HINDSIGHT_API_TOKEN";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -120,9 +123,20 @@ impl HostSupervisor {
             .args(["--host", "127.0.0.1", "--port", "0"])
             .current_dir(&paths.working_directory)
             .env("DSH_HOME", &paths.dsh_home)
+            .env("DSH_DESKTOP_NODE_EXECUTABLE", &paths.node)
+            .env("DSH_DESKTOP_CLI_ENTRY", &paths.cli_entry)
+            .env("DSH_DESKTOP_HOST_ROOT", &paths.host_root)
+            .env("DSH_DESKTOP_WEB_PROFILE", &paths.web_profile)
+            .env("DSH_DESKTOP_USER_HOME", &paths.user_home)
             .env("PATH", host_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        // 环境变量由部署平台显式提供时优先；否则桥接桌面凭据文件中的专用引用。
+        if env::var_os("HINDSIGHT_API_TOKEN").is_none() {
+            if let Some(token) = hindsight_token_from_credentials(&paths.dsh_home)? {
+                command.env("HINDSIGHT_API_TOKEN", token);
+            }
+        }
         hide_console_window(&mut command);
 
         let mut child = command
@@ -234,6 +248,35 @@ impl HostSupervisor {
     }
 }
 
+/// 从 DSH 凭据文档读取 Hindsight 专用引用；返回值仅注入子进程，禁止进入日志。
+fn hindsight_token_from_credentials(dsh_home: &std::path::Path) -> Result<Option<String>, String> {
+    let path = dsh_home.join(".credentials.yaml");
+    let content = match fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(format!(
+                "failed to read DSH credentials {}: {error}",
+                path.display()
+            ))
+        }
+    };
+    let document: serde_yaml::Value = serde_yaml::from_str(&content)
+        .map_err(|error| format!("invalid DSH credentials {}: {error}", path.display()))?;
+    let mapping = document
+        .as_mapping()
+        .ok_or_else(|| format!("DSH credentials {} must be a YAML mapping", path.display()))?;
+    let key = serde_yaml::Value::String(HINDSIGHT_CREDENTIAL_REF.to_owned());
+    match mapping.get(&key) {
+        None => Ok(None),
+        Some(serde_yaml::Value::String(value)) if !value.is_empty() => Ok(Some(value.clone())),
+        Some(_) => Err(format!(
+            "DSH credential {HINDSIGHT_CREDENTIAL_REF} in {} must be a non-empty string",
+            path.display()
+        )),
+    }
+}
+
 /// 生成 Host 私有 PATH，确保内置 Node 与 pnpm 在用户和系统工具之前解析。
 fn build_host_path(paths: &RuntimePaths, inherited: Option<&OsStr>) -> Result<OsString, String> {
     let node_directory = paths.node.parent().ok_or_else(|| {
@@ -295,12 +338,16 @@ fn hide_console_window(_command: &mut Command) {}
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::fs;
     use std::io;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
-    use super::{build_host_path, HostSupervisor, ManagedChild, ProcessTreeTerminator};
+    use super::{
+        build_host_path, hindsight_token_from_credentials, HostSupervisor, ManagedChild,
+        ProcessTreeTerminator,
+    };
     use crate::runtime::RuntimePaths;
 
     struct FakeChild {
@@ -477,5 +524,52 @@ mod tests {
                 std::path::PathBuf::from(r"C:\tools")
             ]
         );
+    }
+
+    #[test]
+    fn hindsight_credential_bridge_reads_only_the_dedicated_reference() {
+        let root = std::env::temp_dir().join(format!(
+            "dsh-desktop-host-credentials-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join(".credentials.yaml"),
+            "OTHER_TOKEN: keep-private\nDSH_DESKTOP_HINDSIGHT_API_TOKEN: hindsight-private\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            hindsight_token_from_credentials(&root).unwrap(),
+            Some("hindsight-private".to_owned())
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn hindsight_credential_bridge_rejects_non_string_values() {
+        let root = std::env::temp_dir().join(format!(
+            "dsh-desktop-host-invalid-credentials-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join(".credentials.yaml"),
+            "DSH_DESKTOP_HINDSIGHT_API_TOKEN: 123\n",
+        )
+        .unwrap();
+
+        assert!(hindsight_token_from_credentials(&root)
+            .unwrap_err()
+            .contains("non-empty string"));
+        fs::remove_dir_all(root).unwrap();
     }
 }

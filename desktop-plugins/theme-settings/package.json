@@ -1,7 +1,7 @@
 {
   "name": "@dsh-desktop/theme-settings",
-  "version": "0.1.0-preview.4",
-  "description": "Desktop-owned settings adapter for managed plugin toggles and the upstream DSH Skin Center",
+  "version": "0.1.0-preview.5",
+  "description": "Desktop-owned settings for managed plugins, Hindsight project memory, and the upstream DSH Skin Center",
   "license": "MIT",
   "type": "module",
   "main": "lib/index.js",

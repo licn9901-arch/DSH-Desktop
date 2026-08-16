@@ -9,6 +9,25 @@
   ],
   "plugins": [
     {
+      "package": "@dsh-desktop/runtime-services",
+      "version": "0.1.0-preview.5",
+      "bundleId": "desktop-runtime-services",
+      "license": "MIT",
+      "source": {
+        "type": "local",
+        "path": "desktop-plugins/runtime-services"
+      },
+      "requiredFiles": [
+        "lib/index.js",
+        "cordis.patch.yml",
+        "LICENSE"
+      ],
+      "permissions": [
+        "为 Market 提供固定 web profile 与串行包管理服务",
+        "按 profile 元数据选择内置 pnpm 9、10 或 11"
+      ]
+    },
+    {
       "package": "dsh-at-file",
       "version": "0.6.0",
       "bundleId": "dsh-at-file",
@@ -86,7 +105,7 @@
     },
     {
       "package": "@dsh-desktop/theme-settings",
-      "version": "0.1.0-preview.4",
+      "version": "0.1.0-preview.5",
       "bundleId": "desktop-theme-settings",
       "license": "MIT",
       "source": {
@@ -101,6 +120,7 @@
       ],
       "permissions": [
         "原子切换精确白名单中的桌面托管 bundle，不修改依赖或卸载文件",
+        "配置 Hindsight 服务、凭据状态和项目级显式启用",
         "在设置左侧声明主题一级入口",
         "渲染 Skin Center 使用的 web-ui.plugin.item 槽位"
       ]
@@ -167,19 +187,19 @@
       ]
     },
     {
-      "package": "@zebbkira/dsh-skills-mcp-manager",
-      "version": "0.1.3",
+      "package": "@cubee-slide/skills-mcp-manager",
+      "version": "0.2.3",
       "bundleId": "skills-mcp-manager",
       "license": "MIT",
       "source": {
         "type": "npm",
-        "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-DTd3QzS8bDPjHlzYrEXQIXIoADwz+oL5+kS1AfX4RcLcJcKQ5rnXrxaXbbv/lrGuteLwfLTrYQSB2Cj2dCSkNQ=="
+        "integrity": "sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="
       },
       "requiredFiles": [
         "lib/index.js",
         "lib/client.js",
-        "cordis.patch.yml"
+        "cordis.patch.yml",
+        "LICENSE"
       ],
       "permissions": [
         "列出、启用、停用和删除 DSH Skills",

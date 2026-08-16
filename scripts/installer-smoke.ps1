@@ -1,6 +1,7 @@
 param(
     [Parameter(Mandatory = $true)]
     [string]$Installer,
+    [string]$InstallRoot,
     [int]$TimeoutSeconds = 180
 )
 
@@ -13,17 +14,23 @@ $installerPath = if ([System.IO.Path]::IsPathRooted($Installer)) {
 else {
     [System.IO.Path]::GetFullPath((Join-Path $projectRoot $Installer))
 }
-$installRoot = Join-Path $env:LOCALAPPDATA 'DeepSeek Harness Desktop'
+$installRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
+    Join-Path $env:LOCALAPPDATA 'DeepSeek Harness Desktop'
+}
+else {
+    [System.IO.Path]::GetFullPath($InstallRoot)
+}
 $installedExe = Join-Path $installRoot 'dsh-desktop.exe'
 $uninstaller = Join-Path $installRoot 'uninstall.exe'
 $bundledNode = Join-Path $installRoot 'node\node.exe'
 $bundledCli = Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh\lib\bin.js'
 $bundledMarket = Join-Path $installRoot 'host\node_modules\dshmarket\package.json'
-$bundledMarketAlias = @(
-    (Join-Path $installRoot 'host\node_modules\dshmarket-desktop\package.json'),
-    (Join-Path $installRoot 'host\node_modules\dshmarket-desktop\client\client.js')
-)
 $bundledPnpm = Join-Path $installRoot 'host\node_modules\.bin\pnpm.cmd'
+$bundledPnpmToolchains = @(
+    (Join-Path $installRoot 'host\toolchains\pnpm-9\pnpm.cmd'),
+    (Join-Path $installRoot 'host\toolchains\pnpm-10\pnpm.cmd'),
+    (Join-Path $installRoot 'host\toolchains\pnpm-11\pnpm.cmd')
+)
 $bundledMarketPolicy = Join-Path $installRoot 'policy\dsh-market.patch.yml'
 $bundledRuntimeLicenses = @(
     (Join-Path $installRoot 'node\LICENSE'),
@@ -44,8 +51,8 @@ $bundledPlugins = @(
     (Join-Path $installRoot 'plugins\node_modules\@vectorize-io\hindsight-coding-agents\dist\dsh.js'),
     (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\index.js'),
     (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\client.js'),
-    (Join-Path $installRoot 'plugins\node_modules\@zebbkira\dsh-skills-mcp-manager\lib\index.js'),
-    (Join-Path $installRoot 'plugins\node_modules\@zebbkira\dsh-skills-mcp-manager\lib\client.js')
+    (Join-Path $installRoot 'plugins\node_modules\@cubee-slide\skills-mcp-manager\lib\index.js'),
+    (Join-Path $installRoot 'plugins\node_modules\@cubee-slide\skills-mcp-manager\lib\client.js')
 )
 $webIndexCandidates = @(
     (Join-Path $installRoot 'host\node_modules\@deepseek-ai\dsh-web-frontend\dist\index.html'),
@@ -63,7 +70,8 @@ if ((Test-Path -LiteralPath $installedExe -PathType Leaf) -or
 $installed = $false
 try {
     # 自动化使用 NSIS 静默安装；应用生命周期仍由完整桌面冒烟脚本验证。
-    $installProcess = Start-Process -FilePath $installerPath -ArgumentList '/S' -PassThru -Wait
+    # `/D=` 必须是 NSIS 的最后一个参数；隔离目录可避免 smoke 触碰用户已有安装。
+    $installProcess = Start-Process -FilePath $installerPath -ArgumentList @('/S', "/D=$installRoot") -PassThru -Wait
     $installed = Test-Path -LiteralPath $installRoot -PathType Container
     if ($installProcess.ExitCode -ne 0) {
         throw "Silent installation failed with exit code $($installProcess.ExitCode)."
@@ -79,8 +87,8 @@ try {
             (Test-Path -LiteralPath $bundledNode -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledCli -PathType Leaf) -and
             (Test-Path -LiteralPath $bundledMarket -PathType Leaf) -and
-            (($bundledMarketAlias | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledMarketAlias.Count) -and
             (Test-Path -LiteralPath $bundledPnpm -PathType Leaf) -and
+            (($bundledPnpmToolchains | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledPnpmToolchains.Count) -and
             (Test-Path -LiteralPath $bundledMarketPolicy -PathType Leaf) -and
             (($bundledRuntimeLicenses | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledRuntimeLicenses.Count) -and
             (Test-Path -LiteralPath $bundledPluginLock -PathType Leaf) -and

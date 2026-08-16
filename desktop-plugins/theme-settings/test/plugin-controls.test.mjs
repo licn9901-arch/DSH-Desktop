@@ -7,7 +7,12 @@ import {
   assertToggleBody,
   isSameOriginRequest,
   listManagedPlugins,
+  normalizeHindsightConfig,
+  readHindsightState,
+  saveHindsightConfig,
+  testHindsightConnection,
   toggleManagedPlugin,
+  updateHindsightCredential,
 } from "../lib/index.js";
 
 const directories = [];
@@ -45,6 +50,10 @@ afterEach(async () => {
 
 test("只接受 web profile 白名单，并保护基础 bundle", () => {
   assert.throws(
+    () => assertToggleBody({ profile: "web", package: "@dsh-desktop/runtime-services", enabled: false }),
+    /protected-bundle/,
+  );
+  assert.throws(
     () => assertToggleBody({ profile: "web", package: "dshmarket", enabled: false }),
     /protected-bundle/,
   );
@@ -57,6 +66,24 @@ test("只接受 web profile 白名单，并保护基础 bundle", () => {
     /invalid-request/,
   );
 });
+
+function fakeCredentials(initial = undefined) {
+  let value = initial;
+  return {
+    async describe() {
+      return { configured: typeof value === "string", source: value === undefined ? undefined : "file", writable: true };
+    },
+    async resolve() {
+      return value === undefined ? undefined : { value, source: "file" };
+    },
+    async set(_ref, next) {
+      value = next;
+    },
+    async unset() {
+      value = undefined;
+    },
+  };
+}
 
 test("API 只接受回环 Host 与同源浏览器请求", () => {
   assert.equal(
@@ -119,4 +146,89 @@ test("并发开关串行合并，列表返回最终状态", async () => {
   const rows = await listManagedPlugins(path);
   assert.equal(rows.find((row) => row.package === "dsh-at-file").enabled, false);
   assert.equal(rows.find((row) => row.package === "@omdsh-dev/dsh-genui").enabled, false);
+});
+
+test("Hindsight 保存只修改托管字段并强制项目显式启用", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-desktop-hindsight-"));
+  directories.push(directory);
+  const path = join(directory, "coding-agent.json");
+  await writeFile(path, JSON.stringify({
+    customRoot: { keep: true },
+    serverMode: "daemon",
+    apiUrl: "http://old.test",
+    harnesses: { dsh: { customDsh: 7, optInOnly: false }, codex: { disabled: true } },
+  }), "utf8");
+
+  const result = await saveHindsightConfig({
+    serverMode: "self-hosted",
+    apiUrl: "http://127.0.0.1:8888/",
+    optInPaths: [directory, directory],
+  }, path);
+  const updated = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(result.restartRequired, true);
+  assert.deepEqual(updated.customRoot, { keep: true });
+  assert.deepEqual(updated.harnesses.codex, { disabled: true });
+  assert.equal(updated.harnesses.dsh.customDsh, 7);
+  assert.equal(updated.harnesses.dsh.optInOnly, true);
+  assert.deepEqual(updated.harnesses.dsh.optInPaths, [directory]);
+  assert.equal(updated.apiUrl, "http://127.0.0.1:8888");
+});
+
+test("Hindsight 凭据不回显，新密钥成功写入后移除旧明文", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-desktop-hindsight-secret-"));
+  directories.push(directory);
+  const path = join(directory, "coding-agent.json");
+  await writeFile(path, JSON.stringify({ apiToken: "legacy-secret", unknown: true }), "utf8");
+  const credentials = fakeCredentials();
+
+  const before = await readHindsightState(credentials, path);
+  assert.equal(before.credential.configured, true);
+  assert.equal(before.credential.source, "legacy-file");
+  assert(!JSON.stringify(before).includes("legacy-secret"));
+
+  const after = await updateHindsightCredential(credentials, { token: "new-secret" }, path);
+  assert.equal(after.credential.configured, true);
+  assert(!JSON.stringify(after).includes("new-secret"));
+  const config = JSON.parse(await readFile(path, "utf8"));
+  assert.equal(config.apiToken, undefined);
+  assert.equal(config.unknown, true);
+});
+
+test("Hindsight 拒绝非法 URL 和相对项目路径", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-desktop-hindsight-invalid-"));
+  directories.push(directory);
+  const path = join(directory, "coding-agent.json");
+  await assert.rejects(
+    saveHindsightConfig({ serverMode: "self-hosted", apiUrl: "file:///tmp", optInPaths: [] }, path),
+    /invalid-api-url/,
+  );
+  await assert.rejects(
+    saveHindsightConfig({ serverMode: "cloud", apiUrl: "", optInPaths: ["relative"] }, path),
+    /invalid-opt-in-path/,
+  );
+  assert.deepEqual(normalizeHindsightConfig({}), {
+    serverMode: "cloud",
+    apiUrl: "https://api.hindsight.vectorize.io",
+    optInPaths: [],
+  });
+});
+
+test("Hindsight 连接测试使用凭据且只返回版本", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dsh-desktop-hindsight-test-"));
+  directories.push(directory);
+  const path = join(directory, "coding-agent.json");
+  const credentials = fakeCredentials("private-token");
+  let authorization = "";
+  const result = await testHindsightConnection(
+    credentials,
+    { serverMode: "self-hosted", apiUrl: "https://memory.example", optInPaths: [] },
+    path,
+    async (_url, options) => {
+      authorization = options.headers.authorization;
+      return new Response(JSON.stringify({ version: "1.2.3" }), { status: 200 });
+    },
+  );
+  assert.equal(authorization, "Bearer private-token");
+  assert.deepEqual(result, { ok: true, version: "1.2.3" });
+  assert(!JSON.stringify(result).includes("private-token"));
 });

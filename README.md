@@ -25,11 +25,11 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.4` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.5` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
-`dshmarket 1.6.0` 与 `pnpm 11.22.0`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
+`dshmarket 1.9.0` 与 `pnpm 11.22.0`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
 或 DeepSeek 官方桌面端。
 
 ## 主要功能
@@ -45,7 +45,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.4` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.5` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -54,11 +54,11 @@
 | [`@omdsh-dev/dsh-genui`](https://github.com/omdsh-dev/dsh-genui) | 0.8.4 | 本地渲染 GenUI、Mermaid 和 Three.js；action 会作为消息回传模型 |
 | [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) | 0.12.2 | 可操作文件、Git 和本机 PTY；模型终端工具保持关闭，首次托管安装关闭 HTTP/HTTPS 接管 |
 | [`@linxin666/dsh-skins`](https://github.com/zhu1090093659/dsh-web-ui) | 0.1.17 | 只安装 Skin Center 与聚合皮肤，不安装 Web UI 全家桶；设置左侧“主题”可试穿、应用和恢复 |
-| [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | 默认 `harnesses.dsh.optInOnly=true` 且项目清单为空，不记录也不上传；已有配置不改 |
+| [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | 设置左侧“项目记忆”可配置 Cloud/自托管服务、凭据和项目 opt-in；未启用项目不记录也不上传 |
 | [`@liustack/modlens`](https://github.com/liustack/modlens) | 3.16.7 | 提供图片读取和结构化视觉结果；不预置密钥、视觉端点或 Agent CLI |
-| [`@zebbkira/dsh-skills-mcp-manager`](https://github.com/zebbkira/dsh-skills-mcp-manager) | 0.1.3 | 设置一级页管理 DSH Skills 与真实 MCP 连接；MCP `env`/`headers` 明文存于 `~/.dsh/mcp.json` |
+| [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.3 | 桌面长期维护版；统一 Skills/MCP 界面与按钮，MCP 只保留 JSON 配置；`env`/`headers` 明文存于 `~/.dsh/mcp.json` |
 
-桌面自有 `@dsh-desktop/theme-settings` 提供“预置插件”和“主题”两个设置一级入口。“预置插件”
+桌面自有 `@dsh-desktop/theme-settings` 提供“预置插件”“项目记忆”和“主题”三个设置一级入口。“预置插件”
 只切换白名单 package bundle，不卸载文件、不修改 dependencies、不调用 pnpm；保存后通过托盘
 “重启 DSH 服务”生效。官方 bundle、Market 与桌面控制 bundle 自身不可关闭，未知用户 bundle
 不会被修改。
@@ -66,11 +66,12 @@
 GenUI 的锁定 `SKILL.md` 首次启动会写入 `$DSH_HOME/skills/genui/SKILL.md`，只作用于 DSH。
 已有非托管同名 Skill 不覆盖；托管文件未修改时会随版本升级，用户修改或删除后保留用户选择。
 
-DSH Market `1.6.0` 作为桌面运行时 bundle 固定交付，不写入用户 profile dependencies，也不能由
+DSH Market `1.9.0` 以原始包名作为桌面运行时 bundle 固定交付，不写入用户 profile dependencies，也不能由
 市场升级或卸载。它使用 curated registry 搜索插件，并通过内置 DSH CLI 与私有 pnpm 在
 `~/.dsh/profiles/web` 安装、更新和卸载用户插件；离线可浏览内置快照，但安装、更新和可靠的版本检查需要网络。
-桌面端使用安装根私有模块别名加载 Market，并在构建时只适配严格客户端注册 ID；因此用户 profile
-中已有的同名依赖会原样保留，但不会覆盖当前桌面发行版的活动 Market 版本。
+桌面端在 Market 前加载受保护的 Runtime Services，并按 profile 的 pnpm major 选择固定的 pnpm
+`9.15.9`、`10.33.2` 或 `11.22.0`；新 profile 默认使用 11，未知 major 会明确拒绝。旧版 pnpm
+仅为已有 profile 兼容保留，当前 npm audit 对 pnpm 9/10 报告无可用修复的高危公告。
 
 第三方插件与桌面应用拥有相同主机权限，目前没有包签名验证、权限清单或进程级沙箱。npm
 预构建包可以直接安装；需要 `prepare`、`allowBuilds` 等脚本的 GitHub 源必须逐包明确确认。
@@ -135,7 +136,7 @@ npm run build
 ```
 
 构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，以及 DSH、Market、pnpm 的 npm
-integrity，并按 `plugins.lock.json` 校验 8 个托管 bundle 与 1 个托管 Skill
+integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管 Skill
 归档与 npm integrity。三组固定 lockfile 分别执行 `npm ci`；插件组额外使用
 `--omit=dev --ignore-scripts`。Node、DSH CLI、Web 前端、插件本地资产、PTY 和许可证全部验证后
 才调用 Tauri 打包。
@@ -177,6 +178,8 @@ npm run smoke
 - 市场显示“状态未知”：表示 registry 或版本检查失败，不等同于“已是最新”。
 - 插件安装后未生效：从托盘选择“重启 DSH 服务”，不要依赖 Market 内部重启。
 - 预置插件开关：打开“设置 → 预置插件”；开关保存后需从托盘重启 DSH 服务。
+- 项目记忆：打开“设置 → 项目记忆”；配置服务与 Token 后，只开启需要记忆的项目并重启 DSH 服务。
+- Skills 与 MCP：打开“设置 → 技能与 MCP”；MCP 服务统一使用 JSON 编辑器配置。
 - 主题切换：打开“设置 → 主题”；该入口由桌面适配器提供，具体皮肤 UI 与 Host API 仍来自 Skin Center。
 - 窗口关闭后仍有任务：这是关闭到托盘的预期行为，请从托盘菜单重新打开或显式退出。
 - 构建提示运行时或插件缺失、哈希不匹配：不要绕过校验，清理对应 `.runtime-cache` 后重新暂存。

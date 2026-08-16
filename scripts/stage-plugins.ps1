@@ -120,7 +120,7 @@ foreach ($plugin in $pluginLock.plugins) {
         Copy-Item -Path (Join-Path $source '*') -Destination $target -Recurse -Force
         continue
     }
-    if ($plugin.source.type -ne 'github-tarball') {
+    if ($plugin.source.type -notin @('github-tarball', 'github-release-asset')) {
         continue
     }
     $archivePath = Get-LockedArchive -Plugin $plugin
@@ -140,7 +140,7 @@ $licenses = foreach ($property in $packageLock['packages'].GetEnumerator()) {
         integrity = $property.Value['integrity']
     }
 }
-foreach ($plugin in $pluginLock.plugins | Where-Object { $_.source.type -eq 'github-tarball' }) {
+foreach ($plugin in $pluginLock.plugins | Where-Object { $_.source.type -in @('github-tarball', 'github-release-asset') }) {
     $licenses += [pscustomobject][ordered]@{
         name = $plugin.package
         version = $plugin.version

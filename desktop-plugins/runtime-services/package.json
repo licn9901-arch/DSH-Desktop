@@ -1,0 +1,20 @@
+{
+  "name": "@dsh-desktop/runtime-services",
+  "version": "0.1.0-preview.5",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "files": [
+    "lib/index.js",
+    "cordis.patch.yml",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test"
+  }
+}

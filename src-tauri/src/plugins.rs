@@ -20,7 +20,10 @@ const BASE_BUNDLE: &str = "@deepseek-ai/dsh-base";
 const WEB_APP_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 const MARKET_BUNDLE: &str = "dshmarket";
 const MARKET_RUNTIME_ALIAS: &str = "dshmarket-desktop";
+const RUNTIME_SERVICES_BUNDLE: &str = "@dsh-desktop/runtime-services";
 const DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/theme-settings";
+const LEGACY_SKILLS_MCP_BUNDLE: &str = "@zebbkira/dsh-skills-mcp-manager";
+const SKILLS_MCP_BUNDLE: &str = "@cubee-slide/skills-mcp-manager";
 const LEGACY_SIDE_PANEL: &str = "@dsh-external/dsh-side-panel";
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -62,6 +65,14 @@ pub enum PluginSource {
     GithubTarball {
         url: String,
         commit: String,
+        sha256: String,
+    },
+    /// GitHub Release 中的 npm pack 绑定仓库、tag、commit 与文件 SHA-256。
+    GithubReleaseAsset {
+        repository: String,
+        tag: String,
+        commit: String,
+        url: String,
         sha256: String,
     },
     /// 仓库自有预构建 bundle，只允许从仓库内相对目录暂存。
@@ -139,6 +150,7 @@ struct ProfilePlan {
     profile: Value,
     next_state: PluginInstallState,
     managed_packages: Vec<String>,
+    removed_packages: Vec<String>,
 }
 
 /// 抽象 Windows directory junction，测试可注入内存实现。
@@ -162,7 +174,8 @@ pub struct PluginManager {
     dsh_home: PathBuf,
     web_profile: PathBuf,
     managed_plugins_root: PathBuf,
-    market_root: PathBuf,
+    bundled_market_root: PathBuf,
+    legacy_market_root: PathBuf,
     user_home: PathBuf,
     linker: Arc<dyn DirectoryLinker>,
 }
@@ -198,7 +211,7 @@ impl PluginManager {
             paths.dsh_home.clone(),
             paths.web_profile.clone(),
             paths.managed_plugins_root.clone(),
-            paths.host_root.join("node_modules/dshmarket-desktop"),
+            paths.host_root.join("node_modules/dshmarket"),
             paths.user_home.clone(),
             Arc::new(SystemDirectoryLinker {
                 node: paths.node.clone(),
@@ -212,16 +225,18 @@ impl PluginManager {
         dsh_home: PathBuf,
         web_profile: PathBuf,
         managed_plugins_root: PathBuf,
-        market_root: PathBuf,
+        bundled_market_root: PathBuf,
         user_home: PathBuf,
         linker: Arc<dyn DirectoryLinker>,
     ) -> Self {
+        let legacy_market_root = bundled_market_root.with_file_name(MARKET_RUNTIME_ALIAS);
         Self {
             resources,
             dsh_home,
             web_profile,
             managed_plugins_root,
-            market_root,
+            bundled_market_root,
+            legacy_market_root,
             user_home,
             linker,
         }
@@ -229,6 +244,7 @@ impl PluginManager {
 
     /// 校验资源并准备 profile；任何中途错误都必须保持原状态。
     pub fn prepare(&self) -> Result<PluginTransaction, String> {
+        self.repair_legacy_skin_patch()?;
         // Market 属于桌面运行时层，必须先于可回滚的四个托管插件持久化。
         self.ensure_builtin_market()?;
         let lock_path = self.resources.join("plugins.lock.json");
@@ -251,8 +267,6 @@ impl PluginManager {
             persist_profile_backup(&self.dsh_home, &profile_path)?;
         }
         let expected_profile_bytes = read_optional_bytes(&profile_path)?;
-        let installs_skins = plan.next_state.managed.contains_key("@linxin666/dsh-skins");
-
         let mut transaction = PluginTransaction {
             should_seed_sidebar: plan.next_state.managed.contains_key("dsh-better-sidebar")
                 && !state.sidebar_defaults_seeded,
@@ -293,6 +307,23 @@ impl PluginManager {
                 if !path.exists() {
                     transaction.snapshots.push(FileSnapshot::capture(&path)?);
                     atomic_write(&path, content)?;
+                }
+            }
+
+            for package in &plan.removed_packages {
+                let Some(previous) = state.managed.get(package) else {
+                    continue;
+                };
+                let link = profile_modules.join(package_relative_path(package)?);
+                let current_target = self.linker.target(&link)?;
+                if current_target.as_ref().is_some_and(|target| {
+                    normalized_path(target) == normalized_path(Path::new(&previous.link_target))
+                }) {
+                    self.linker.remove(&link)?;
+                    transaction.link_changes.push(LinkChange {
+                        link,
+                        previous_target: current_target,
+                    });
                 }
             }
 
@@ -338,17 +369,6 @@ impl PluginManager {
                 .snapshots
                 .push(FileSnapshot::capture(&profile_path)?);
             atomic_write_json(&profile_path, &plan.profile)?;
-
-            // Skin Center 首次写入前确保 patch 文件存在；回滚时仍恢复用户原状态。
-            if installs_skins {
-                let patch_path = self.dsh_home.join("cordis.patch.yml");
-                if !patch_path.exists() {
-                    transaction
-                        .snapshots
-                        .push(FileSnapshot::capture(&patch_path)?);
-                    atomic_write(&patch_path, b"[]\n")?;
-                }
-            }
 
             for skill in &lock.skills {
                 let source = store_modules
@@ -424,54 +444,120 @@ impl PluginManager {
         Ok(transaction)
     }
 
-    /// 将内置 Market bundle 非破坏性写入 web profile，并保留用户依赖与未知 bundle。
+    /// 修复 preview.4 产生的 `[]` 加 Skin 管理块，修复先于插件事务并在 core retry 时保留。
+    pub fn repair_legacy_skin_patch(&self) -> Result<bool, String> {
+        let path = self.dsh_home.join("cordis.patch.yml");
+        let Some(content) = read_optional_bytes(&path)? else {
+            return Ok(false);
+        };
+        let Some(repaired) = repair_legacy_skin_patch_content(&content)? else {
+            return Ok(false);
+        };
+        atomic_write(&path, &repaired)?;
+        Ok(true)
+    }
+
+    /// 将内置 Market 非破坏性写入 web profile，并确保干净 profile 能解析运行时包。
     fn ensure_builtin_market(&self) -> Result<(), String> {
-        self.ensure_market_runtime_alias()?;
+        self.remove_legacy_market_runtime_alias()?;
         let profile_path = self.web_profile.join("package.json");
         let mut profile = read_profile(&profile_path)?;
         let original = profile.clone();
         insert_builtin_market(&mut profile)?;
+        let root = profile
+            .as_object_mut()
+            .ok_or_else(|| "profile package.json root must be an object".to_owned())?;
+        let dependencies = object_field(root, "dependencies")?;
+        let target = normalized_path(&self.bundled_market_root);
+        let expected_dependency = link_spec(&target);
+        let current_dependency = dependencies.get(MARKET_BUNDLE).and_then(Value::as_str);
+        let desktop_managed = match current_dependency {
+            None => {
+                dependencies.insert(
+                    MARKET_BUNDLE.to_owned(),
+                    Value::String(expected_dependency.clone()),
+                );
+                true
+            }
+            Some(current) => current == expected_dependency,
+        };
+
+        let link = self.web_profile.join("node_modules").join(MARKET_BUNDLE);
+        let previous_target = self.linker.target(&link)?;
+        let expected_target = fs::canonicalize(&self.bundled_market_root)
+            .unwrap_or_else(|_| self.bundled_market_root.clone());
+        let points_to_bundled_market = previous_target
+            .as_ref()
+            .is_some_and(|current| normalized_path(current) == normalized_path(&expected_target));
+
+        if desktop_managed {
+            if !self.bundled_market_root.join("package.json").is_file() {
+                return Err(format!(
+                    "bundled Market is incomplete: {}",
+                    self.bundled_market_root.display()
+                ));
+            }
+            fs::create_dir_all(link.parent().expect("Market link always has a parent"))
+                .map_err(|error| format!("failed to create Market link parent: {error}"))?;
+            if link.exists() && previous_target.is_none() {
+                return Err(format!(
+                    "refusing to replace non-managed Market directory: {}",
+                    link.display()
+                ));
+            }
+            if !points_to_bundled_market {
+                if previous_target.is_some() {
+                    self.linker.remove(&link)?;
+                }
+                if let Err(error) = self.linker.create(&link, &self.bundled_market_root) {
+                    if let Some(previous) = &previous_target {
+                        let _ = self.linker.create(&link, previous);
+                    }
+                    return Err(error);
+                }
+            }
+        } else if points_to_bundled_market {
+            // 用户依赖优先；移除桌面端链接，交由 DSH 的包管理流程解析用户版本。
+            self.linker.remove(&link)?;
+        }
+
         if profile == original {
             return Ok(());
         }
         if profile_path.is_file() {
             persist_profile_backup(&self.dsh_home, &profile_path)?;
         }
-        atomic_write_json(&profile_path, &profile)
+        if let Err(error) = atomic_write_json(&profile_path, &profile) {
+            let current_target = self.linker.target(&link)?;
+            if current_target != previous_target {
+                if current_target.is_some() {
+                    let _ = self.linker.remove(&link);
+                }
+                if let Some(previous) = previous_target {
+                    let _ = self.linker.create(&link, &previous);
+                }
+            }
+            return Err(error);
+        }
+        Ok(())
     }
 
-    /// 将桌面私有模块别名指向注册名已适配的 Market 副本，避免用户同名依赖覆盖活动版本。
-    fn ensure_market_runtime_alias(&self) -> Result<(), String> {
-        if !self.market_root.join("package.json").is_file() {
-            return Err(format!(
-                "bundled Market package is missing: {}",
-                self.market_root.display()
-            ));
-        }
+    /// 只清理目标精确指向旧桌面副本的 Market alias，普通目录与用户链接保持不变。
+    fn remove_legacy_market_runtime_alias(&self) -> Result<(), String> {
         let alias = self
             .dsh_home
             .join("profiles/node_modules")
             .join(MARKET_RUNTIME_ALIAS);
-        let expected =
-            fs::canonicalize(&self.market_root).unwrap_or_else(|_| self.market_root.clone());
+        let expected = fs::canonicalize(&self.legacy_market_root)
+            .unwrap_or_else(|_| self.legacy_market_root.clone());
         let current = self.linker.target(&alias)?;
-        if current.as_ref().is_some_and(|target| target == &expected) {
-            return Ok(());
-        }
-        if alias.exists() && current.is_none() {
-            return Err(format!(
-                "desktop Market runtime alias is occupied by a regular directory: {}",
-                alias.display()
-            ));
-        }
-        if current.is_some() {
+        if current
+            .as_ref()
+            .is_some_and(|target| normalized_path(target) == normalized_path(&expected))
+        {
             self.linker.remove(&alias)?;
         }
-        if let Some(parent) = alias.parent() {
-            fs::create_dir_all(parent)
-                .map_err(|error| format!("failed to create {}: {error}", parent.display()))?;
-        }
-        self.linker.create(&alias, &expected)
+        Ok(())
     }
 }
 
@@ -562,17 +648,23 @@ impl FileSnapshot {
 impl DirectoryLinker for SystemDirectoryLinker {
     /// 只把 reparse point/symlink 识别为受控链接，普通目录永不覆盖。
     fn target(&self, link: &Path) -> Result<Option<PathBuf>, String> {
-        if !link.exists() {
-            return Ok(None);
-        }
-        let metadata = fs::symlink_metadata(link)
-            .map_err(|error| format!("failed to inspect {}: {error}", link.display()))?;
+        let metadata = match fs::symlink_metadata(link) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(error) => return Err(format!("failed to inspect {}: {error}", link.display())),
+        };
         if !is_directory_link(&metadata) {
             return Ok(None);
         }
-        fs::canonicalize(link)
-            .map(Some)
-            .map_err(|error| format!("failed to resolve {}: {error}", link.display()))
+        match fs::canonicalize(link) {
+            Ok(target) => Ok(Some(target)),
+            Err(canonical_error) => fs::read_link(link).map(Some).map_err(|read_error| {
+                format!(
+                    "failed to resolve {}: {canonical_error}; read link failed: {read_error}",
+                    link.display()
+                )
+            }),
+        }
     }
 
     /// Windows 使用 junction；其他平台仅供开发测试使用目录 symlink。
@@ -817,6 +909,29 @@ fn read_optional_bytes(path: &Path) -> Result<Option<Vec<u8>>, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(format!("failed to read {}: {error}", path.display())),
     }
+}
+
+/// 识别 preview.4 的非法 Skin patch 形态并只移除首行空数组，后续管理块逐字保留。
+fn repair_legacy_skin_patch_content(content: &[u8]) -> Result<Option<Vec<u8>>, String> {
+    let text = std::str::from_utf8(content)
+        .map_err(|error| format!("skin patch is not valid UTF-8: {error}"))?;
+    let first_line_end = text.find('\n').unwrap_or(text.len());
+    if text[..first_line_end].trim_end_matches('\r') != "[]" {
+        return Ok(None);
+    }
+    let remainder = text[first_line_end..].trim_start_matches(['\r', '\n']);
+    let has_skin_marker = remainder.contains("# --- dsh-skin managed")
+        || remainder
+            .lines()
+            .any(|line| line.trim_start().starts_with("- id: ui-skin-"));
+    if !has_skin_marker {
+        return Ok(None);
+    }
+    let mut repaired = remainder.as_bytes().to_vec();
+    if !repaired.ends_with(b"\n") {
+        repaired.push(b'\n');
+    }
+    Ok(Some(repaired))
 }
 
 /// 在修改现有 profile 前保留带时间戳的原始文件，供人工审计和恢复。
@@ -1137,6 +1252,26 @@ fn plan_profile(
     current_bundles.retain(|bundle| bundle != LEGACY_SIDE_PANEL);
     insert_market_bundle(&mut current_bundles);
 
+    // 只迁移仍与桌面 marker 匹配的旧 Skills/MCP 依赖；用户替换的来源保持原样。
+    let mut removed_packages = Vec::new();
+    let legacy_skills_enabled = state
+        .managed
+        .get(LEGACY_SKILLS_MCP_BUNDLE)
+        .and_then(|record| {
+            let dependency = dependency_values
+                .get(LEGACY_SKILLS_MCP_BUNDLE)
+                .and_then(Value::as_str)?;
+            (dependency == link_spec(&record.link_target)).then(|| {
+                let enabled = current_bundles
+                    .iter()
+                    .any(|bundle| bundle == LEGACY_SKILLS_MCP_BUNDLE);
+                dependency_values.remove(LEGACY_SKILLS_MCP_BUNDLE);
+                current_bundles.retain(|bundle| bundle != LEGACY_SKILLS_MCP_BUNDLE);
+                removed_packages.push(LEGACY_SKILLS_MCP_BUNDLE.to_owned());
+                enabled
+            })
+        });
+
     let mut next_state = PluginInstallState {
         schema_version: SUPPORTED_SCHEMA_VERSION,
         lock_digest: lock_digest.to_owned(),
@@ -1171,8 +1306,12 @@ fn plan_profile(
             plugin.package.clone(),
             Value::String(link_spec(&target_text)),
         );
-        let bundle_enabled = if plugin.package == DESKTOP_SETTINGS_BUNDLE {
+        let bundle_enabled = if [RUNTIME_SERVICES_BUNDLE, DESKTOP_SETTINGS_BUNDLE]
+            .contains(&plugin.package.as_str())
+        {
             true
+        } else if plugin.package == SKILLS_MCP_BUNDLE && legacy_skills_enabled.is_some() {
+            legacy_skills_enabled.unwrap_or(true)
         } else {
             previous
                 .map(|_| {
@@ -1228,7 +1367,7 @@ fn plan_profile(
         managed_packages.push(dependency.package.clone());
     }
 
-    let managed_bundles = lock
+    let mut managed_bundles = lock
         .plugins
         .iter()
         .filter(|plugin| {
@@ -1239,6 +1378,17 @@ fn plan_profile(
         })
         .map(|plugin| plugin.package.clone())
         .collect::<Vec<_>>();
+    let runtime_services = managed_bundles
+        .iter()
+        .position(|bundle| bundle == RUNTIME_SERVICES_BUNDLE)
+        .map(|index| managed_bundles.remove(index));
+    let market_index = current_bundles
+        .iter()
+        .position(|bundle| bundle == MARKET_BUNDLE)
+        .unwrap_or(0);
+    if let Some(runtime_services) = runtime_services {
+        current_bundles.insert(market_index, runtime_services);
+    }
     let managed_insertion = current_bundles
         .iter()
         .position(|bundle| bundle == MARKET_BUNDLE)
@@ -1252,6 +1402,7 @@ fn plan_profile(
         profile,
         next_state,
         managed_packages,
+        removed_packages,
     })
 }
 
@@ -1323,6 +1474,31 @@ fn validate_plugin_source(package: &str, source: &PluginSource) -> Result<(), St
             }
             if !is_lower_hex(commit, 40) {
                 return Err(format!("plugin {package} has an invalid commit"));
+            }
+            if !is_lower_hex(sha256, 64) {
+                return Err(format!("plugin {package} has an invalid SHA-256"));
+            }
+            Ok(())
+        }
+        PluginSource::GithubReleaseAsset {
+            repository,
+            tag,
+            commit,
+            url,
+            sha256,
+        } => {
+            if repository.trim().is_empty()
+                || tag.trim().is_empty()
+                || !url.starts_with(&format!(
+                    "https://github.com/{repository}/releases/download/{tag}/"
+                ))
+            {
+                return Err(format!(
+                    "plugin {package} has an untrusted release asset URL"
+                ));
+            }
+            if !is_lower_hex(commit, 40) {
+                return Err(format!("plugin {package} has an invalid release commit"));
             }
             if !is_lower_hex(sha256, 64) {
                 return Err(format!("plugin {package} has an invalid SHA-256"));
@@ -1435,10 +1611,11 @@ mod tests {
 
     use super::{
         copy_physical_tree, normalized_path, package_relative_path, plan_managed_skill,
-        plan_profile, sha256_hex, DirectoryLinker, ManagedPluginState, ManagedSkill,
-        ManagedSkillAction, ManagedSkillState, PluginInstallState, PluginLock, PluginManager,
-        BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE, LEGACY_SIDE_PANEL, MARKET_BUNDLE,
-        MARKET_RUNTIME_ALIAS, WEB_APP_BUNDLE,
+        plan_profile, repair_legacy_skin_patch_content, sha256_hex, DirectoryLinker,
+        ManagedPluginState, ManagedSkill, ManagedSkillAction, ManagedSkillState,
+        PluginInstallState, PluginLock, PluginManager, BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE,
+        LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE, MARKET_BUNDLE, MARKET_RUNTIME_ALIAS,
+        RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {
@@ -1447,6 +1624,7 @@ mod tests {
               "schemaVersion": 1,
               "sharedPackages": ["@deepseek-ai", "react", "react-dom"],
               "plugins": [
+                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.5","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
@@ -1454,7 +1632,7 @@ mod tests {
                 {"package":"@linxin666/dsh-skins","version":"0.1.17","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["cordis.patch.yml"]},
                 {"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight-coding-agents","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dist/dsh.js"]},
                 {"package":"@liustack/modlens","version":"3.16.7","bundleId":"modlens","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dsh/index.js"]},
-                {"package":"@zebbkira/dsh-skills-mcp-manager","version":"0.1.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]}
+                {"package":"@cubee-slide/skills-mcp-manager","version":"0.2.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="},"requiredFiles":["lib/index.js"]}
               ],
               "skills":[{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
             }"#,
@@ -1509,6 +1687,27 @@ mod tests {
     }
 
     #[test]
+    fn legacy_empty_array_before_skin_block_is_repaired_to_a_valid_top_level_list() {
+        let broken = b"[]\r\n\r\n# --- dsh-skin managed (auto-generated; do not edit) ---\r\n- id: ui-skin-blue-fantasy\r\n  disabled: true\r\n";
+        let repaired = repair_legacy_skin_patch_content(broken)
+            .unwrap()
+            .expect("known preview.4 shape must be repaired");
+        let text = String::from_utf8(repaired).unwrap();
+        assert!(text.starts_with("# --- dsh-skin managed"));
+        assert!(text.contains("- id: ui-skin-blue-fantasy"));
+        assert!(!text.starts_with("[]"));
+        let yaml: serde_yaml::Value = serde_yaml::from_str(&text).unwrap();
+        assert!(yaml.is_sequence());
+    }
+
+    #[test]
+    fn unrelated_empty_array_patch_is_not_rewritten() {
+        assert!(repair_legacy_skin_patch_content(b"[]\n# user content\n")
+            .unwrap()
+            .is_none());
+    }
+
+    #[test]
     fn clean_profile_receives_exact_managed_order_and_link_dependencies() {
         let plan = plan_profile(
             json!({}),
@@ -1524,6 +1723,7 @@ mod tests {
             vec![
                 BASE_BUNDLE,
                 WEB_APP_BUNDLE,
+                RUNTIME_SERVICES_BUNDLE,
                 "dshmarket",
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
@@ -1532,10 +1732,10 @@ mod tests {
                 "@linxin666/dsh-skins",
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
-                "@zebbkira/dsh-skills-mcp-manager"
+                SKILLS_MCP_BUNDLE
             ]
         );
-        assert_eq!(plan.managed_packages.len(), 8);
+        assert_eq!(plan.managed_packages.len(), 9);
         assert_eq!(plan.next_state.lock_digest, "digest-a");
         assert!(plan.profile["dependencies"]["dsh-at-file"]
             .as_str()
@@ -1701,6 +1901,7 @@ mod tests {
             vec![
                 BASE_BUNDLE,
                 WEB_APP_BUNDLE,
+                RUNTIME_SERVICES_BUNDLE,
                 "dshmarket",
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
@@ -1709,7 +1910,7 @@ mod tests {
                 "@linxin666/dsh-skins",
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
-                "@zebbkira/dsh-skills-mcp-manager",
+                SKILLS_MCP_BUNDLE,
                 "user-bundle"
             ]
         );
@@ -1736,6 +1937,7 @@ mod tests {
             vec![
                 BASE_BUNDLE,
                 WEB_APP_BUNDLE,
+                RUNTIME_SERVICES_BUNDLE,
                 "dshmarket",
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
@@ -1744,7 +1946,7 @@ mod tests {
                 "@linxin666/dsh-skins",
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
-                "@zebbkira/dsh-skills-mcp-manager",
+                SKILLS_MCP_BUNDLE,
                 "user-bundle"
             ]
         );
@@ -1826,6 +2028,49 @@ mod tests {
         assert!(active.contains(&DESKTOP_SETTINGS_BUNDLE));
         assert!(!plan.next_state.managed["@vectorize-io/hindsight-coding-agents"].bundle_enabled);
         assert!(plan.next_state.managed[DESKTOP_SETTINGS_BUNDLE].bundle_enabled);
+        assert!(active.contains(&RUNTIME_SERVICES_BUNDLE));
+        assert!(plan.next_state.managed[RUNTIME_SERVICES_BUNDLE].bundle_enabled);
+    }
+
+    #[test]
+    fn legacy_skills_mcp_disabled_state_migrates_to_desktop_package() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let old_target = r"C:\old\node_modules\@zebbkira\dsh-skills-mcp-manager";
+        let mut managed = BTreeMap::new();
+        managed.insert(
+            LEGACY_SKILLS_MCP_BUNDLE.to_owned(),
+            ManagedPluginState {
+                version: "0.1.3".to_owned(),
+                link_target: old_target.to_owned(),
+                bundle_enabled: false,
+            },
+        );
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed,
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dependencies": {
+            LEGACY_SKILLS_MCP_BUNDLE: "link:C:/old/node_modules/@zebbkira/dsh-skills-mcp-manager"
+          },
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE]}}
+        });
+
+        let plan = plan_profile(profile, &state, &lock(), store, "new").unwrap();
+
+        assert_eq!(plan.removed_packages, vec![LEGACY_SKILLS_MCP_BUNDLE]);
+        assert!(plan.profile["dependencies"]
+            .get(LEGACY_SKILLS_MCP_BUNDLE)
+            .is_none());
+        assert!(plan.profile["dependencies"][SKILLS_MCP_BUNDLE]
+            .as_str()
+            .unwrap()
+            .starts_with("link:"));
+        assert!(!bundles(&plan.profile).contains(&SKILLS_MCP_BUNDLE));
+        assert!(!plan.next_state.managed[SKILLS_MCP_BUNDLE].bundle_enabled);
     }
 
     #[test]
@@ -1939,7 +2184,7 @@ mod tests {
         }
 
         fn create(&self, link: &Path, target: &Path) -> Result<(), String> {
-            if !link.ends_with(MARKET_RUNTIME_ALIAS) {
+            if !link.ends_with(MARKET_RUNTIME_ALIAS) && !link.ends_with(MARKET_BUNDLE) {
                 fs::write(&self.profile, br#"{"name":"written-by-user"}"#).unwrap();
             }
             self.links
@@ -1961,9 +2206,7 @@ mod tests {
         let dsh_home = root.path().join("home/.dsh");
         let web_profile = dsh_home.join("profiles/web");
         let managed = dsh_home.join("profiles/node_modules/.dsh-desktop");
-        let market_root = root
-            .path()
-            .join("runtime/host/node_modules/dshmarket-desktop");
+        let bundled_market_root = root.path().join("runtime/host/node_modules/dshmarket");
         root.write(
             "resources/plugins/plugins.lock.json",
             br#"{
@@ -1986,6 +2229,10 @@ mod tests {
             b"- insert: []",
         );
         root.write(
+            "runtime/host/node_modules/dshmarket/package.json",
+            br#"{"name":"dshmarket","version":"1.9.0"}"#,
+        );
+        root.write(
             "runtime/host/node_modules/dshmarket-desktop/package.json",
             br#"{"name":"dshmarket-desktop","version":"1.6.0"}"#,
         );
@@ -1995,7 +2242,7 @@ mod tests {
             dsh_home,
             web_profile,
             managed,
-            market_root,
+            bundled_market_root,
             root.path().join("home"),
             linker.clone(),
         );
@@ -2040,6 +2287,10 @@ mod tests {
             b"export {}",
         );
         root.write(
+            "runtime/host/node_modules/dshmarket/package.json",
+            br#"{"name":"dshmarket","version":"1.9.0"}"#,
+        );
+        root.write(
             "runtime/host/node_modules/dshmarket-desktop/package.json",
             br#"{"name":"dshmarket-desktop","version":"1.6.0"}"#,
         );
@@ -2048,8 +2299,7 @@ mod tests {
             dsh_home.clone(),
             dsh_home.join("profiles/web"),
             dsh_home.join("profiles/node_modules/.dsh-desktop"),
-            root.path()
-                .join("runtime/host/node_modules/dshmarket-desktop"),
+            root.path().join("runtime/host/node_modules/dshmarket"),
             root.path().join("home"),
             Arc::new(FakeLinker::default()),
         );
@@ -2070,32 +2320,67 @@ mod tests {
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .exists());
         assert_eq!(linker.links.lock().unwrap().len(), 2);
-        let market_link_target = linker
-            .links
-            .lock()
-            .unwrap()
-            .get(
-                &root
-                    .path()
-                    .join("home/.dsh/profiles/node_modules/dshmarket-desktop"),
-            )
-            .cloned();
-        assert_eq!(
-            market_link_target,
-            Some(
-                fs::canonicalize(
-                    root.path()
-                        .join("runtime/host/node_modules/dshmarket-desktop")
-                )
-                .unwrap()
-            )
-        );
+        assert!(linker.links.lock().unwrap().contains_key(
+            &root
+                .path()
+                .join("home/.dsh/profiles/web/node_modules/dshmarket")
+        ));
+        assert!(!linker.links.lock().unwrap().contains_key(
+            &root
+                .path()
+                .join("home/.dsh/profiles/node_modules/dshmarket-desktop")
+        ));
 
         transaction.commit().unwrap();
         assert!(root
             .path()
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .is_file());
+    }
+
+    #[test]
+    fn user_market_dependency_prevents_desktop_runtime_link() {
+        let (root, manager, linker) = manager_fixture();
+        root.write(
+            "home/.dsh/profiles/web/package.json",
+            br#"{"dependencies":{"dshmarket":"1.8.0"},"dsh":{"profile":{"bundles":["@deepseek-ai/dsh-base"]}}}"#,
+        );
+
+        let transaction = manager.prepare().unwrap();
+        let profile: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(profile["dependencies"][MARKET_BUNDLE], "1.8.0");
+        assert!(!linker.links.lock().unwrap().contains_key(
+            &root
+                .path()
+                .join("home/.dsh/profiles/web/node_modules/dshmarket")
+        ));
+        transaction.rollback().unwrap();
+    }
+
+    #[test]
+    fn prepare_repairs_existing_skin_patch_before_host_startup() {
+        let (root, manager, _linker) = manager_fixture();
+        root.write(
+            "home/.dsh/cordis.patch.yml",
+            b"[]\n\n# --- dsh-skin managed (auto-generated; do not edit) ---\n- id: ui-skin-blue-fantasy\n  disabled: true\n",
+        );
+
+        let transaction = manager.prepare().unwrap();
+        let repaired = fs::read_to_string(root.path().join("home/.dsh/cordis.patch.yml")).unwrap();
+        assert!(repaired.starts_with("# --- dsh-skin managed"));
+        assert!(serde_yaml::from_str::<serde_yaml::Value>(&repaired)
+            .unwrap()
+            .is_sequence());
+        transaction.rollback().unwrap();
+        // 历史坏文件修复独立于插件事务，core fallback 也必须继续使用合法 patch。
+        assert!(
+            !fs::read_to_string(root.path().join("home/.dsh/cordis.patch.yml"))
+                .unwrap()
+                .starts_with("[]")
+        );
     }
 
     #[test]
@@ -2111,7 +2396,10 @@ mod tests {
             &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
         )
         .unwrap();
-        assert_eq!(restored["dependencies"], json!({}));
+        assert!(restored["dependencies"][MARKET_BUNDLE]
+            .as_str()
+            .unwrap()
+            .starts_with("link:"));
         assert_eq!(bundles(&restored), vec![BASE_BUNDLE, MARKET_BUNDLE]);
         assert_eq!(linker.links.lock().unwrap().len(), 1);
         assert!(!root
@@ -2208,8 +2496,7 @@ mod tests {
             dsh_home.clone(),
             web_profile,
             dsh_home.join("profiles/node_modules/.dsh-desktop"),
-            root.path()
-                .join("runtime/host/node_modules/dshmarket-desktop"),
+            root.path().join("runtime/host/node_modules/dshmarket"),
             root.path().join("home"),
             linker.clone(),
         );
