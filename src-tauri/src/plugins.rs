@@ -6,6 +6,9 @@ use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -16,6 +19,8 @@ const SUPPORTED_SCHEMA_VERSION: u32 = 1;
 const BASE_BUNDLE: &str = "@deepseek-ai/dsh-base";
 const WEB_APP_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 const LEGACY_SIDE_PANEL: &str = "@dsh-external/dsh-side-panel";
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// 描述构建期已验证、运行期允许挂载的全部插件。
 #[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
@@ -491,12 +496,12 @@ fn ensure_plugin_store(
             .map_err(|error| format!("failed to clear plugin staging directory: {error}"))?;
     }
     let result = (|| {
-        copy_physical_tree(
-            &resources.join("node_modules"),
-            &staging.join("node_modules"),
-        )?;
+        let source_modules = resources.join("node_modules");
+        let staging_modules = staging.join("node_modules");
+        copy_physical_tree(&source_modules, &staging_modules)?;
+        validate_physical_tree(&staging_modules)?;
         atomic_write(&staging.join("plugins.lock.json"), lock_bytes)?;
-        validate_plugin_tree(&staging.join("node_modules"), lock)?;
+        validate_plugin_tree(&staging_modules, lock)?;
         fs::rename(&staging, store).map_err(|error| {
             format!(
                 "failed to activate plugin cache {}: {error}",
@@ -510,8 +515,14 @@ fn ensure_plugin_store(
     result
 }
 
-/// 递归复制普通文件和目录，并拒绝资源包中的链接与 reparse point。
+/// 递归复制普通文件和目录；Windows 使用多线程系统复制缩短首次启动时间。
 fn copy_physical_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    validate_physical_tree(source)?;
+    copy_validated_tree(source, destination)
+}
+
+/// 递归拒绝资源树中的链接、junction 和其他非常规文件。
+fn validate_physical_tree(source: &Path) -> Result<(), String> {
     let metadata = fs::symlink_metadata(source)
         .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
     if is_directory_link(&metadata) || metadata.file_type().is_symlink() {
@@ -520,6 +531,60 @@ fn copy_physical_tree(source: &Path, destination: &Path) -> Result<(), String> {
             source.display()
         ));
     }
+    if metadata.is_file() {
+        return Ok(());
+    }
+    if !metadata.is_dir() {
+        return Err(format!("unsupported plugin resource: {}", source.display()));
+    }
+    for entry in fs::read_dir(source)
+        .map_err(|error| format!("failed to read {}: {error}", source.display()))?
+    {
+        let entry = entry.map_err(|error| format!("failed to read plugin resource: {error}"))?;
+        validate_physical_tree(&entry.path())?;
+    }
+    Ok(())
+}
+
+/// Windows 10/11 自带 robocopy；多线程复制 4,000 余个插件文件，避免阻塞启动数分钟。
+#[cfg(windows)]
+fn copy_validated_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let mut command = Command::new("robocopy.exe");
+    command
+        .arg(source)
+        .arg(destination)
+        .args([
+            "/E",
+            "/COPY:DAT",
+            "/DCOPY:DAT",
+            "/R:1",
+            "/W:1",
+            "/MT:16",
+            "/XJ",
+            "/SL",
+            "/NFL",
+            "/NDL",
+            "/NJH",
+            "/NJS",
+            "/NP",
+        ])
+        .creation_flags(CREATE_NO_WINDOW);
+    let output = command
+        .output()
+        .map_err(|error| format!("failed to start robocopy.exe: {error}"))?;
+    let exit_code = output.status.code().unwrap_or(i32::MAX);
+    if exit_code > 7 {
+        let detail = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+        return Err(format!("robocopy failed with code {exit_code}: {detail}"));
+    }
+    Ok(())
+}
+
+/// 非 Windows 环境使用标准库逐文件复制，仅用于开发与单元测试。
+#[cfg(not(windows))]
+fn copy_validated_tree(source: &Path, destination: &Path) -> Result<(), String> {
+    let metadata = fs::symlink_metadata(source)
+        .map_err(|error| format!("failed to inspect {}: {error}", source.display()))?;
     if metadata.is_file() {
         if let Some(parent) = destination.parent() {
             fs::create_dir_all(parent)
@@ -534,16 +599,13 @@ fn copy_physical_tree(source: &Path, destination: &Path) -> Result<(), String> {
         })?;
         return Ok(());
     }
-    if !metadata.is_dir() {
-        return Err(format!("unsupported plugin resource: {}", source.display()));
-    }
     fs::create_dir_all(destination)
         .map_err(|error| format!("failed to create {}: {error}", destination.display()))?;
     for entry in fs::read_dir(source)
         .map_err(|error| format!("failed to read {}: {error}", source.display()))?
     {
         let entry = entry.map_err(|error| format!("failed to read plugin resource: {error}"))?;
-        copy_physical_tree(&entry.path(), &destination.join(entry.file_name()))?;
+        copy_validated_tree(&entry.path(), &destination.join(entry.file_name()))?;
     }
     Ok(())
 }
@@ -1084,8 +1146,8 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        plan_profile, DirectoryLinker, ManagedPluginState, PluginInstallState, PluginLock,
-        PluginManager, BASE_BUNDLE, LEGACY_SIDE_PANEL, WEB_APP_BUNDLE,
+        copy_physical_tree, plan_profile, DirectoryLinker, ManagedPluginState, PluginInstallState,
+        PluginLock, PluginManager, BASE_BUNDLE, LEGACY_SIDE_PANEL, WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {
@@ -1520,6 +1582,23 @@ mod tests {
             br#"{"name":"written-by-user"}"#
         );
         assert!(linker.links.lock().unwrap().is_empty());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn plugin_store_copy_rejects_directory_junctions() {
+        let root = TestDirectory::new("copy-junction");
+        let source = root.path().join("source");
+        let outside = root.path().join("outside");
+        let link = source.join("linked");
+        fs::create_dir_all(&source).unwrap();
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("payload.js"), b"export {};").unwrap();
+        super::create_directory_link(Path::new("node.exe"), &link, &outside).unwrap();
+
+        let error = copy_physical_tree(&source, &root.path().join("destination")).unwrap_err();
+        assert!(error.contains("must not contain links"));
+        fs::remove_dir(&link).unwrap();
     }
 
     #[cfg(windows)]

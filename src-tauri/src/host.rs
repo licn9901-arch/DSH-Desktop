@@ -34,6 +34,8 @@ pub trait ManagedChild: Send {
     fn try_exit_code(&mut self) -> io::Result<Option<Option<i32>>>;
     /// 等待进程结束并返回可用退出码。
     fn wait_for_exit(&mut self) -> io::Result<Option<i32>>;
+    /// 进程树终止命令不可用时，使用已持有句柄强制结束根进程。
+    fn force_exit(&mut self) -> io::Result<()>;
 }
 
 impl ManagedChild for Child {
@@ -49,25 +51,29 @@ impl ManagedChild for Child {
     fn wait_for_exit(&mut self) -> io::Result<Option<i32>> {
         self.wait().map(|status| status.code())
     }
+
+    fn force_exit(&mut self) -> io::Result<()> {
+        self.kill()
+    }
 }
 
 /// 抽象 Windows 进程树终止动作，测试可记录请求而不操作真实进程。
 trait ProcessTreeTerminator {
     /// 请求进程树正常结束。
-    fn request(&self, pid: u32);
+    fn request(&self, pid: u32) -> Result<(), String>;
     /// 强制结束仍未退出的完整进程树。
-    fn force(&self, pid: u32);
+    fn force(&self, pid: u32) -> Result<(), String>;
 }
 
 struct WindowsProcessTreeTerminator;
 
 impl ProcessTreeTerminator for WindowsProcessTreeTerminator {
-    fn request(&self, pid: u32) {
-        run_taskkill(pid, false);
+    fn request(&self, pid: u32) -> Result<(), String> {
+        run_taskkill(pid, false)
     }
 
-    fn force(&self, pid: u32) {
-        run_taskkill(pid, true);
+    fn force(&self, pid: u32) -> Result<(), String> {
+        run_taskkill(pid, true)
     }
 }
 
@@ -177,7 +183,11 @@ impl HostSupervisor {
         };
         let pid = child.id();
         log_app(&format!("requesting host shutdown: pid={pid}"));
-        terminator.request(pid);
+        if let Err(error) = terminator.request(pid) {
+            log_error(&format!(
+                "host graceful shutdown request failed: pid={pid}, {error}"
+            ));
+        }
 
         let deadline = Instant::now() + grace_period;
         while Instant::now() < deadline {
@@ -195,7 +205,17 @@ impl HostSupervisor {
         }
 
         log_error(&format!("forcing host process tree shutdown: pid={pid}"));
-        terminator.force(pid);
+        if let Err(error) = terminator.force(pid) {
+            log_error(&format!(
+                "host process tree shutdown failed; forcing root process handle: pid={pid}, {error}"
+            ));
+            if let Err(kill_error) = child.force_exit() {
+                log_error(&format!(
+                    "failed to force host root process handle: pid={pid}, {kill_error}"
+                ));
+                return;
+            }
+        }
         match child.wait_for_exit() {
             Ok(exit_code) => log_app(&format!(
                 "host process tree reaped: pid={pid}, code={exit_code:?}"
@@ -205,8 +225,8 @@ impl HostSupervisor {
     }
 }
 
-/// 调用 Windows `taskkill` 处理指定 PID 的完整进程树。
-fn run_taskkill(pid: u32, force: bool) {
+/// 调用 Windows `taskkill` 处理指定 PID 的完整进程树，并保留失败诊断。
+fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
     let pid_text = pid.to_string();
     let mut killer = Command::new("taskkill");
     killer.args(["/PID", &pid_text, "/T"]);
@@ -214,7 +234,25 @@ fn run_taskkill(pid: u32, force: bool) {
         killer.arg("/F");
     }
     hide_console_window(&mut killer);
-    let _ = killer.status();
+    let output = killer
+        .output()
+        .map_err(|error| format!("failed to start taskkill: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout).trim().to_owned();
+    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+    Err(format!(
+        "taskkill exited with {}: {}{}{}",
+        output.status,
+        stdout,
+        if stdout.is_empty() || stderr.is_empty() {
+            ""
+        } else {
+            "; "
+        },
+        stderr
+    ))
 }
 
 /// 防止 Windows GUI 应用启动控制台子进程时弹出黑色窗口。
@@ -230,6 +268,7 @@ fn hide_console_window(_command: &mut Command) {}
 mod tests {
     use std::collections::VecDeque;
     use std::io;
+    use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -240,6 +279,7 @@ mod tests {
         pid: u32,
         polls: VecDeque<Option<Option<i32>>>,
         wait_code: Option<i32>,
+        forced: Option<Arc<AtomicBool>>,
     }
 
     impl ManagedChild for FakeChild {
@@ -254,6 +294,13 @@ mod tests {
         fn wait_for_exit(&mut self) -> io::Result<Option<i32>> {
             Ok(self.wait_code)
         }
+
+        fn force_exit(&mut self) -> io::Result<()> {
+            if let Some(forced) = &self.forced {
+                forced.store(true, Ordering::SeqCst);
+            }
+            Ok(())
+        }
     }
 
     #[derive(Default)]
@@ -263,12 +310,26 @@ mod tests {
     }
 
     impl ProcessTreeTerminator for RecordingTerminator {
-        fn request(&self, pid: u32) {
+        fn request(&self, pid: u32) -> Result<(), String> {
             self.requested.lock().unwrap().push(pid);
+            Ok(())
         }
 
-        fn force(&self, pid: u32) {
+        fn force(&self, pid: u32) -> Result<(), String> {
             self.forced.lock().unwrap().push(pid);
+            Ok(())
+        }
+    }
+
+    struct FailingTerminator;
+
+    impl ProcessTreeTerminator for FailingTerminator {
+        fn request(&self, _pid: u32) -> Result<(), String> {
+            Err("request denied".to_owned())
+        }
+
+        fn force(&self, _pid: u32) -> Result<(), String> {
+            Err("force denied".to_owned())
         }
     }
 
@@ -284,6 +345,7 @@ mod tests {
             pid: 42,
             polls: VecDeque::from([Some(Some(7))]),
             wait_code: Some(7),
+            forced: None,
         });
         assert_eq!(supervisor.try_exit_code(), Some(Some(7)));
     }
@@ -311,6 +373,7 @@ mod tests {
             pid: 43,
             polls: VecDeque::from([Some(Some(0))]),
             wait_code: Some(0),
+            forced: None,
         });
         let terminator = RecordingTerminator::default();
         supervisor.shutdown_with(&terminator, Duration::from_secs(1), Duration::ZERO);
@@ -325,10 +388,26 @@ mod tests {
             pid: 44,
             polls: VecDeque::new(),
             wait_code: Some(1),
+            forced: None,
         });
         let terminator = RecordingTerminator::default();
         supervisor.shutdown_with(&terminator, Duration::ZERO, Duration::ZERO);
         assert_eq!(*terminator.requested.lock().unwrap(), vec![44]);
         assert_eq!(*terminator.forced.lock().unwrap(), vec![44]);
+    }
+
+    #[test]
+    fn taskkill_failure_falls_back_to_owned_child_handle() {
+        let forced = Arc::new(AtomicBool::new(false));
+        let supervisor = supervisor(FakeChild {
+            pid: 45,
+            polls: VecDeque::new(),
+            wait_code: Some(1),
+            forced: Some(forced.clone()),
+        });
+
+        supervisor.shutdown_with(&FailingTerminator, Duration::ZERO, Duration::ZERO);
+
+        assert!(forced.load(Ordering::SeqCst));
     }
 }

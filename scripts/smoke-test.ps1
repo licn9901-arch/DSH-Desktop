@@ -28,8 +28,6 @@ $logPath = Join-Path $logDirectory 'dsh-desktop.log'
 New-Item -ItemType Directory -Force -Path $logDirectory, $workingDirectory | Out-Null
 
 $previousEnvironment = @{
-    USERPROFILE = $env:USERPROFILE
-    HOME = $env:HOME
     DSH_HOME = $env:DSH_HOME
     DSH_DESKTOP_LOG_DIR = $env:DSH_DESKTOP_LOG_DIR
     DSH_DESKTOP_NODE_EXECUTABLE = $env:DSH_DESKTOP_NODE_EXECUTABLE
@@ -43,8 +41,7 @@ $hostProcessId = $null
 $succeeded = $false
 
 try {
-    $env:USERPROFILE = $smokeRoot
-    $env:HOME = $smokeRoot
+    # WebView2 依赖真实 Windows 用户目录；只隔离 DSH_HOME，避免伪造用户身份导致初始化阻塞。
     $env:DSH_HOME = Join-Path $smokeRoot '.dsh'
     $env:DSH_DESKTOP_LOG_DIR = $logDirectory
     if ($UseBundledRuntime) {
