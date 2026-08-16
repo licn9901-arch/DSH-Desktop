@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows 桌面封装。
+  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows / macOS 桌面封装。
 </p>
 
 <p align="center">
@@ -22,10 +22,13 @@
 
 项目官网：[https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 
-从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
-`DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
+从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载对应平台的安装包：
 
-`v0.1.0-preview.3` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+- Windows 10 22H2 / Windows 11 x64：`DeepSeek Harness Desktop_*_x64-setup.exe`
+- macOS 12 及以上：Apple Silicon 使用 `*_aarch64.dmg`，Intel 使用 `*_x64.dmg`
+
+`v0.1.0-preview.3` 未使用 Authenticode 签名或 Apple Developer ID 公证，Windows SmartScreen
+或 macOS Gatekeeper 可能显示未知开发者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -34,7 +37,7 @@
 
 ## 主要功能
 
-- 一键启动本地 `dsh web`，等待严格校验的回环地址后在 WebView2 中加载。
+- 一键启动本地 `dsh web`，等待严格校验的回环地址后在系统 WebView 中加载。
 - 单实例运行：再次启动只恢复并聚焦现有窗口，不创建第二个 Host。
 - 关闭主窗口后隐藏到系统托盘，任务继续运行；只有托盘“退出”才清理 Host。
 - 托盘可串行重启 DSH 服务；新 PID 和随机端口就绪后自动恢复 WebView。
@@ -102,19 +105,29 @@ node --expose-internals <bundled-dsh>/lib/bin.js web --patch <desktop-policy> --
 
 ## 与上游项目的关系
 
-本仓库只维护 Tauri 桌面壳、进程生命周期、自包含运行时、日志、安全边界和 Windows 发布流程。
+本仓库只维护 Tauri 桌面壳、进程生命周期、自包含运行时、日志、安全边界和桌面发布流程。
 它不修改 DSH Web UI，也不修改 Agent 核心能力。DSH、DSH Market、pnpm 与 Web 前端按
 `runtime.lock.json` 固定版本并遵循各自上游许可证。
 
 ## 从源码开发
 
-环境要求：PowerShell 7、Node.js `22.22.3`、Rust `1.94.1`、MSVC C++ Build Tools 和 WebView2。
+环境要求：Node.js `22.22.3` 与 Rust `1.94.1`。Windows 还需要 PowerShell 7、MSVC C++ Build
+Tools 和 WebView2；macOS 还需要 Xcode Command Line Tools。
 
 ```powershell
 git clone https://github.com/licn9901-arch/DSH-Desktop.git
 Set-Location DSH-Desktop
 npm ci
 .\dev.cmd
+```
+
+macOS：
+
+```bash
+git clone https://github.com/licn9901-arch/DSH-Desktop.git
+cd DSH-Desktop
+npm ci
+npm run tauri dev
 ```
 
 开发构建允许以下覆盖项，发布构建会忽略 Node 与 CLI 覆盖并只使用内置运行时：
@@ -141,6 +154,17 @@ integrity，并按 `plugins.lock.json` 校验 8 个托管 bundle 与 1 个托管
 才调用 Tauri 打包。
 暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
 `src-tauri/target/release/bundle/nsis`。
+
+macOS 使用当前机器架构对应的官方 Node.js 固定归档，并校验 SHA-256、运行时、插件和原生 PTY
+后生成 DMG。构建不会签名或公证：
+
+```bash
+npm run build:macos
+# 或在 Finder 中双击 build-macos.command
+```
+
+DMG 输出到 `src-tauri/target/release/bundle/dmg`。Apple Silicon 与 Intel 安装包必须分别在
+对应架构的 Mac 上构建。
 
 已有缓存时可离线暂存：
 
@@ -171,7 +195,8 @@ npm run smoke
 
 ## 日志与故障排查
 
-日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`。
+Windows 日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`；macOS 日志位于
+`~/Library/Logs/io.github.licn9901-arch.dsh-desktop/dsh-desktop.log`。
 
 - 启动失败：查看日志中的 `level=ERROR`、Host PID 和真实退出码。
 - 市场显示“状态未知”：表示 registry 或版本检查失败，不等同于“已是最新”。
@@ -190,7 +215,7 @@ npm run smoke
 
 ## 当前边界
 
-- 仅支持 Windows x64，不支持 macOS、Linux 或 ARM64。
+- 支持 Windows x64、macOS Apple Silicon 与 macOS Intel；暂不支持 Windows ARM64 或 Linux。
 - 不包含自动更新、开机自启、插件签名验证、权限沙箱、手机远控或 Channels。
 - 本机已有的 `0.1.0` 原型不保证原地升级；测试预览版前请先卸载原型并保留用户数据。
 

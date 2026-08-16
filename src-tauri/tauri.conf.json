@@ -23,7 +23,7 @@
       "resources/plugins/": "plugins/",
       "resources/policy/": "policy/"
     },
-    "icon": ["icons/icon.ico", "icons/icon.png"],
+    "icon": ["icons/icon.ico", "icons/icon.png", "icons/icon.icns"],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",
@@ -32,6 +32,10 @@
         "startMenuFolder": "DeepSeek Harness Desktop",
         "installerHooks": "nsis/installer.nsh"
       }
+    },
+    "macOS": {
+      "minimumSystemVersion": "12.0",
+      "signingIdentity": "-"
     }
   }
 }

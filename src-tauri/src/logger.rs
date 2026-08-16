@@ -40,10 +40,16 @@ pub fn log_file_path() -> PathBuf {
         let _ = fs::create_dir_all(&directory);
         return directory.join("dsh-desktop.log");
     }
-    let base = env::var("LOCALAPPDATA")
-        .or_else(|_| env::var("TEMP"))
-        .unwrap_or_else(|_| ".".into());
-    let dir = Path::new(&base).join("dsh-desktop");
+    #[cfg(target_os = "macos")]
+    let dir = PathBuf::from(env::var("HOME").unwrap_or_else(|_| ".".into()))
+        .join("Library/Logs/io.github.licn9901-arch.dsh-desktop");
+    #[cfg(not(target_os = "macos"))]
+    let dir = PathBuf::from(
+        env::var("LOCALAPPDATA")
+            .or_else(|_| env::var("TEMP"))
+            .unwrap_or_else(|_| ".".into()),
+    )
+    .join("dsh-desktop");
     let _ = fs::create_dir_all(&dir);
     dir.join("dsh-desktop.log")
 }

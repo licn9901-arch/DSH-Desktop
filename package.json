@@ -18,7 +18,8 @@
     "verify:plugins": "pwsh -NoProfile -File scripts/verify-plugins.ps1",
     "release:artifacts": "pwsh -NoProfile -File scripts/write-release-artifacts.ps1",
     "dev": "npm run validate:icons && tauri dev",
-    "build": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build"
+    "build": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build",
+    "build:macos": "node scripts/build-macos.mjs"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2"
