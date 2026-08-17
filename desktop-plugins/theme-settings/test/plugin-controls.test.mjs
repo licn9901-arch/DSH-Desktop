@@ -131,6 +131,25 @@ test("开关只修改 bundles，保留 dependencies 与未知用户 bundle", asy
   assert.deepEqual(repeated, updated);
 });
 
+test("启用聚合主题时移除独立 Skin Center bundle", async () => {
+  const { path } = await fixture();
+  const profile = JSON.parse(await readFile(path, "utf8"));
+  profile.dependencies["@linxin666/dsh-skins"] = "link:C:/managed/dsh-skins";
+  profile.dependencies["@linxin666/dsh-client-ui-skin-center"] = "link:C:/managed/skin-center";
+  profile.dsh.profile.bundles.push("@linxin666/dsh-client-ui-skin-center");
+  await writeFile(path, JSON.stringify(profile), "utf8");
+
+  await toggleManagedPlugin(
+    { profile: "web", package: "@linxin666/dsh-skins", enabled: true },
+    path,
+  );
+
+  const updated = JSON.parse(await readFile(path, "utf8"));
+  assert(updated.dsh.profile.bundles.includes("@linxin666/dsh-skins"));
+  assert(!updated.dsh.profile.bundles.includes("@linxin666/dsh-client-ui-skin-center"));
+  assert.equal(updated.dependencies["@linxin666/dsh-client-ui-skin-center"], "link:C:/managed/skin-center");
+});
+
 test("并发开关串行合并，列表返回最终状态", async () => {
   const { path } = await fixture();
   await Promise.all([

@@ -25,7 +25,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.6` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.7` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -45,7 +45,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.6` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.7` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |

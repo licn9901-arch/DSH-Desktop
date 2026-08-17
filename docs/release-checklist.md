@@ -2,7 +2,7 @@
 
 ## 代码与依赖
 
-- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.6`。
+- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.7`。
 - [ ] `runtime.lock.json`、Node SHA-256、DSH、DSH Market 与 pnpm package lock 完全匹配。
 - [ ] `plugins.lock.json`、GitHub 归档 SHA-256、npm integrity 与插件 package lock 完全匹配。
 - [ ] staged 边界不包含 `resources`、`.runtime-cache`、`target`、日志、本机路径或安装包。

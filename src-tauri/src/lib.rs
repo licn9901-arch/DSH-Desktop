@@ -21,11 +21,13 @@ use desktop::{
 use host::HostSupervisor;
 use lifecycle::{HostCommand, HostController, HostEvent, LifecycleAction, LifecycleStateMachine};
 use logger::{log_app, log_error, log_file_path, log_host};
-use navigation::{decide_navigation, NavigationDecision};
+use navigation::{decide_navigation, decide_new_window, NavigationDecision};
 use plugins::{PluginManager, PluginTransaction};
 use readiness::ReadinessParser;
 use runtime::RuntimePaths;
-use tauri::{AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    webview::NewWindowResponse, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
+};
 use tauri_plugin_dialog::DialogExt;
 
 /// 构建并运行桌面应用，负责窗口、Host 和退出清理的顶层编排。
@@ -67,13 +69,15 @@ pub fn run() {
 /// 创建启动页、启动唯一 Host，并注册读取与监视线程。
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
     let handle = app.handle().clone();
+    let window_title = format!("DeepSeek Harness Desktop · v{}", app.package_info().version);
     app.manage(desktop::DesktopLifecycle::default());
     let (host_controller, host_commands) = HostController::new();
     app.manage(host_controller);
     let host_origin = Arc::new(RwLock::new(None::<url::Url>));
     let navigation_origin = host_origin.clone();
+    let new_window_origin = host_origin.clone();
     let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title("DeepSeek Harness Desktop")
+        .title(window_title)
         .inner_size(1280.0, 800.0)
         .min_inner_size(960.0, 600.0)
         .on_navigation(move |target| {
@@ -92,6 +96,24 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
                         target.scheme()
                     ));
                     false
+                }
+            }
+        })
+        .on_new_window(move |target, _features| {
+            let origin = new_window_origin
+                .read()
+                .unwrap_or_else(|error| error.into_inner());
+            match decide_new_window(origin.as_ref(), &target) {
+                NavigationDecision::OpenExternal => {
+                    open_external_url(&target);
+                    NewWindowResponse::Deny
+                }
+                NavigationDecision::Allow | NavigationDecision::Deny => {
+                    log_error(&format!(
+                        "blocked WebView new-window request: scheme={}",
+                        target.scheme()
+                    ));
+                    NewWindowResponse::Deny
                 }
             }
         })

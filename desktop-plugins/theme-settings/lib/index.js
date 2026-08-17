@@ -24,6 +24,9 @@ const MANAGED_PLUGINS = Object.freeze([
   { package: "@cubee-slide/skills-mcp-manager", label: "Skills / MCP Manager" },
 ]);
 const TOGGLEABLE = new Set(MANAGED_PLUGINS.map((item) => item.package));
+const TRANSITIVE_ONLY_BUNDLES = new Set([
+  "@linxin666/dsh-client-ui-skin-center",
+]);
 let writeTail = Promise.resolve();
 let temporarySequence = 0;
 
@@ -341,11 +344,16 @@ async function toggleManagedPlugin(body, path = profilePath()) {
   assertToggleBody(body);
   return serializeWrite(async () => {
     const profile = await readProfile(path);
-    const bundles = profileBundles(profile);
+    const originalBundles = profileBundles(profile);
+    // 聚合主题已经包含 Skin Center；依赖包若被 DSH CLI 单独激活会重复注册 ui-skin-center。
+    const bundles = originalBundles.filter((bundle) => !TRANSITIVE_ONLY_BUNDLES.has(bundle));
     const next = body.enabled
       ? enableManagedBundle(bundles, body.package)
       : bundles.filter((bundle) => bundle !== body.package);
-    if (next.length !== bundles.length || next.some((bundle, index) => bundle !== bundles[index])) {
+    if (
+      next.length !== originalBundles.length
+      || next.some((bundle, index) => bundle !== originalBundles[index])
+    ) {
       profile.dsh.profile.bundles = next;
       await atomicWriteProfile(path, profile);
     }

@@ -1350,6 +1350,9 @@ fn plan_profile(
             dependency.package.clone(),
             Value::String(link_spec(&target_text)),
         );
+        // DSH CLI 会把 profile 中已有的所有直接依赖顺带写入 bundles。伴随依赖只能用于
+        // Node 解析，若保留为顶层 bundle，会与聚合包中的同一 loader entry 重复注册。
+        current_bundles.retain(|bundle| bundle != &dependency.package);
         next_state.managed.insert(
             dependency.package.clone(),
             ManagedPluginState {
@@ -1618,7 +1621,7 @@ mod tests {
               "schemaVersion": 1,
               "sharedPackages": ["@deepseek-ai", "react", "react-dom"],
               "plugins": [
-                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.6","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
+                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.7","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
@@ -1627,6 +1630,9 @@ mod tests {
                 {"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight-coding-agents","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dist/dsh.js"]},
                 {"package":"@liustack/modlens","version":"3.16.7","bundleId":"modlens","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dsh/index.js"]},
                 {"package":"@cubee-slide/skills-mcp-manager","version":"0.2.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="},"requiredFiles":["lib/index.js"]}
+              ],
+              "transitivePackages": [
+                {"package":"@linxin666/dsh-client-ui-skin-center","version":"0.1.17","license":"Apache-2.0","integrity":"sha512-E3/sgA+igBiW/Hp1XPQwHB0BqzbokqOhb+U46hTJHGWGMbYtSQkCUZqIZ6ztHPyd3YtMMzY84LGS1SCYa57O8g==","requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]}
               ],
               "skills":[{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
             }"#,
@@ -1729,7 +1735,7 @@ mod tests {
                 SKILLS_MCP_BUNDLE
             ]
         );
-        assert_eq!(plan.managed_packages.len(), 9);
+        assert_eq!(plan.managed_packages.len(), 10);
         assert_eq!(plan.next_state.lock_digest, "digest-a");
         assert!(plan.profile["dependencies"]["dsh-at-file"]
             .as_str()
@@ -1908,6 +1914,34 @@ mod tests {
                 "user-bundle"
             ]
         );
+    }
+
+    #[test]
+    fn transitive_skin_center_is_removed_from_historical_top_level_bundles() {
+        let profile = json!({
+          "dependencies": {
+            "@linxin666/dsh-client-ui-skin-center": "link:C:/managed/node_modules/@linxin666/dsh-client-ui-skin-center"
+          },
+          "dsh": {"profile": {"bundles": [
+            BASE_BUNDLE,
+            WEB_APP_BUNDLE,
+            "@linxin666/dsh-skins",
+            "@linxin666/dsh-client-ui-skin-center"
+          ]}}
+        });
+        let plan = plan_profile(
+            profile,
+            &PluginInstallState::default(),
+            &lock(),
+            Path::new(r"C:\managed\node_modules"),
+            "digest-transitive-bundle",
+        )
+        .unwrap();
+
+        let active = bundles(&plan.profile);
+        assert!(active.contains(&"@linxin666/dsh-skins"));
+        assert!(!active.contains(&"@linxin666/dsh-client-ui-skin-center"));
+        assert!(!plan.next_state.managed["@linxin666/dsh-client-ui-skin-center"].bundle_enabled);
     }
 
     #[test]

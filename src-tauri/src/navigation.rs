@@ -51,9 +51,20 @@ pub fn decide_navigation(host_origin: Option<&url::Url>, target: &url::Url) -> N
     }
 }
 
+/// 判断新窗口请求如何处理。
+///
+/// 外部 HTTP(S) 仍交给系统浏览器；即使目标与当前 Host 同源，也不允许插件通过
+/// `target=_blank` 或 `window.open` 创建第二个 Harness 桌面窗口。
+pub fn decide_new_window(host_origin: Option<&url::Url>, target: &url::Url) -> NavigationDecision {
+    match decide_navigation(host_origin, target) {
+        NavigationDecision::Allow => NavigationDecision::Deny,
+        decision => decision,
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{decide_navigation, NavigationDecision};
+    use super::{decide_navigation, decide_new_window, NavigationDecision};
 
     fn url(value: &str) -> url::Url {
         url::Url::parse(value).unwrap()
@@ -118,6 +129,27 @@ mod tests {
         );
         assert_eq!(
             decide_navigation(Some(&origin), &url("tauri://localhost/index.html")),
+            NavigationDecision::Deny
+        );
+    }
+
+    #[test]
+    fn new_windows_open_only_external_http_urls_in_the_system_browser() {
+        let origin = url("http://127.0.0.1:43123/");
+        assert_eq!(
+            decide_new_window(Some(&origin), &url("https://github.com/example/project")),
+            NavigationDecision::OpenExternal
+        );
+        assert_eq!(
+            decide_new_window(Some(&origin), &url("http://127.0.0.1:43123/plugins")),
+            NavigationDecision::Deny
+        );
+        assert_eq!(
+            decide_new_window(Some(&origin), &url("file:///C:/Windows/win.ini")),
+            NavigationDecision::Deny
+        );
+        assert_eq!(
+            decide_new_window(Some(&origin), &url("javascript:alert(1)")),
             NavigationDecision::Deny
         );
     }

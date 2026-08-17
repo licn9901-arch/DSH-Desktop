@@ -1,21 +1,17 @@
-# DeepSeek Harness Desktop v0.1.0-preview.6
+# DeepSeek Harness Desktop v0.1.0-preview.7
 
 这是 Windows x64 社区预览版。本项目不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
 ## 本版内容
 
-- 修正已有 pnpm 9/10 profile 的元数据识别，Market 不再误用 pnpm 11 而触发 `Unexpected store location`。
-- 发布前新增真实 Market 安装门禁：在隔离 profile 中安装并卸载 `dsh-pet`，通过后才构建 NSIS。
-- 内置 Market 升级到原始 `dshmarket@1.9.0`，由受保护的桌面 Runtime Services 提供 profile
-  与固定 pnpm。已有 pnpm 9/10/11 profile 会选择相同 major，新 profile 默认使用 11。
-- 设置新增“项目记忆”一级入口，可配置 Hindsight Cloud 或自托管地址、只写 API Token，
-  并从现有工作区或目录选择器显式启用项目。未启用项目保持完全不记录。
-- Skills/MCP Manager 升级为桌面维护版 `@cubee-slide/skills-mcp-manager@0.2.3`：重新设计 Skills 列表、导入、详情、删除确认、
-  MCP 主从布局与操作状态，统一按钮和开关；MCP 配置只保留 JSON 编辑器。
-- 设置保留“预置插件”和“主题”一级入口。Runtime Services、Market 与桌面设置适配器不可停用，
-  可停用插件的状态在升级和 Host 重启后继续保留。
-- Skin Center 使用上游 `0.1.17`，启动时会迁移旧预览版遗留的非法 Skin patch，
-  保留已应用的主题管理块。
+- 原生窗口标题栏现在直接显示桌面版版本号，方便截图、反馈和排查时确认实际运行版本。
+- 插件市场“源码”和 README 中的外链新窗口请求现在交给系统默认浏览器，主 WebView 保持在当前页面。
+- Market 安装公共 GitHub 依赖时增加 HTTPS 兜底，不再要求用户必须预先配置 GitHub SSH 密钥。
+- Market 安装、更新或卸载插件后只保留本次操作产生的 bundle 变化，不会顺带启用 profile 中已有的伴随依赖。
+- Skin Center 伴随包只用于 Node 解析，不再作为顶层 bundle 重复加载；主题入口、应用状态和 Host 重启保持稳定。
+- 设置继续提供“预置插件”“项目记忆”“主题”“技能与 MCP”和“插件市场”入口。
+- 内置 `dshmarket@1.9.0`，并固定离线 pnpm 9、10、11；已有 profile 使用相同 pnpm major，新 profile 默认使用 11。
+- Skills/MCP Manager 使用桌面维护版 `@cubee-slide/skills-mcp-manager@0.2.3`，MCP 配置只保留 JSON 编辑器。
 - GenUI Skill 继续作为 DSH 用户级全局 Skill 托管；用户自有、修改或删除的同名 Skill 不覆盖。
 - ModLens 保持 `3.16.7`，不预置密钥或视觉端点。
 

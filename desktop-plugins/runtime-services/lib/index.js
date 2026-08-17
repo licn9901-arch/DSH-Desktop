@@ -1,9 +1,14 @@
-import { readFileSync } from "node:fs";
+import { readFileSync, renameSync, writeFileSync } from "node:fs";
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
 
 const PROFILE_NAME = "web";
 const SUPPORTED_PNPM_MAJORS = new Set([9, 10, 11]);
+const GITHUB_HTTPS_REWRITES = [
+  "git+ssh://git@github.com/",
+  "ssh://git@github.com/",
+  "git@github.com:",
+];
 let activeOperation = null;
 
 function requiredAbsolutePath(name) {
@@ -64,6 +69,73 @@ function profilePnpmMajor(profileDirectory) {
   }
 }
 
+/**
+ * 为 Market 的公共 GitHub 依赖增加 HTTPS 兜底，同时保留调用方已有的 Git 配置。
+ * pnpm 会把 `github:` 简写重新解析成 SSH URL；未配置 GitHub SSH 密钥时，任意旧依赖都会阻断整个 profile 的安装。
+ */
+function packageManagerEnvironment(baseEnvironment, toolchain) {
+  const environment = {
+    ...baseEnvironment,
+    PATH: `${toolchain}${delimiter}${baseEnvironment.PATH ?? ""}`,
+  };
+  const rawCount = baseEnvironment.GIT_CONFIG_COUNT;
+  const existingCount = rawCount === undefined ? 0 : Number(rawCount);
+  if (!Number.isSafeInteger(existingCount) || existingCount < 0 || existingCount > 1024) {
+    throw new Error("GIT_CONFIG_COUNT must be an integer between 0 and 1024");
+  }
+  GITHUB_HTTPS_REWRITES.forEach((source, offset) => {
+    const index = existingCount + offset;
+    environment[`GIT_CONFIG_KEY_${index}`] = "url.https://github.com/.insteadOf";
+    environment[`GIT_CONFIG_VALUE_${index}`] = source;
+  });
+  environment.GIT_CONFIG_COUNT = String(existingCount + GITHUB_HTTPS_REWRITES.length);
+  return environment;
+}
+
+/** 读取包操作前的直接依赖与 bundle 状态，避免 DSH CLI 顺带启用历史依赖。 */
+function readProfileSnapshot(profileDirectory) {
+  const manifest = JSON.parse(readFileSync(join(profileDirectory, "package.json"), "utf8"));
+  return {
+    dependencies: Object.keys(manifest.dependencies ?? {}),
+    bundles: Array.isArray(manifest.dsh?.profile?.bundles)
+      ? manifest.dsh.profile.bundles.filter((value) => typeof value === "string")
+      : [],
+  };
+}
+
+/**
+ * 归一化 DSH CLI 改写后的 bundle：成功时只追加本次新增依赖，失败时恢复操作前状态。
+ * 依赖字段本身完全由官方 CLI 与 Market 事务管理，本函数只收敛 bundle membership。
+ */
+function reconcileProfileBundles(profileDirectory, before, succeeded) {
+  const manifestPath = join(profileDirectory, "package.json");
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const afterDependencies = Object.keys(manifest.dependencies ?? {});
+  const afterDependencySet = new Set(afterDependencies);
+  const beforeDependencySet = new Set(before.dependencies);
+  const removedDependencies = new Set(before.dependencies.filter((name) => !afterDependencySet.has(name)));
+  const desired = succeeded
+    ? before.bundles.filter((name) => !removedDependencies.has(name))
+    : [...before.bundles];
+
+  if (succeeded) {
+    for (const name of afterDependencies) {
+      if (!beforeDependencySet.has(name) && !desired.includes(name)) desired.push(name);
+    }
+  }
+
+  const current = Array.isArray(manifest.dsh?.profile?.bundles) ? manifest.dsh.profile.bundles : [];
+  if (current.length === desired.length && current.every((name, index) => name === desired[index])) return false;
+
+  manifest.dsh ??= {};
+  manifest.dsh.profile ??= {};
+  manifest.dsh.profile.bundles = desired;
+  const temporaryPath = `${manifestPath}.${process.pid}.${Date.now()}.tmp`;
+  writeFileSync(temporaryPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+  renameSync(temporaryPath, manifestPath);
+  return true;
+}
+
 function terminateProcessTree(child) {
   if (child.exitCode !== null || child.pid === undefined) return;
   if (process.platform === "win32") {
@@ -93,14 +165,12 @@ function runPlugin(args, invokingDirectory, signal) {
   const cli = requiredAbsolutePath("DSH_DESKTOP_CLI_ENTRY");
   const hostRoot = requiredAbsolutePath("DSH_DESKTOP_HOST_ROOT");
   const profileDirectory = requiredAbsolutePath("DSH_DESKTOP_WEB_PROFILE");
+  const profileBefore = readProfileSnapshot(profileDirectory);
   const major = profilePnpmMajor(profileDirectory);
   const toolchain = join(hostRoot, "toolchains", `pnpm-${major}`);
   const child = spawn(node, [cli, "plugin", "--profile", PROFILE_NAME, ...args], {
     cwd: invokingDirectory,
-    env: {
-      ...process.env,
-      PATH: `${toolchain}${delimiter}${process.env.PATH ?? ""}`,
-    },
+    env: packageManagerEnvironment(process.env, toolchain),
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
@@ -114,7 +184,16 @@ function runPlugin(args, invokingDirectory, signal) {
   signal?.addEventListener("abort", cancel, { once: true });
   const done = new Promise((resolve) => {
     child.once("error", () => resolve({ exitCode: 127, signal: null }));
-    child.once("close", (exitCode, closeSignal) => resolve({ exitCode, signal: closeSignal }));
+    child.once("close", (exitCode, closeSignal) => {
+      let effectiveExitCode = exitCode;
+      try {
+        reconcileProfileBundles(profileDirectory, profileBefore, exitCode === 0 && closeSignal === null);
+      } catch (error) {
+        effectiveExitCode = 1;
+        console.error("desktop runtime failed to reconcile profile bundles", error);
+      }
+      resolve({ exitCode: effectiveExitCode, signal: closeSignal });
+    });
   }).finally(() => {
     signal?.removeEventListener("abort", cancel);
     if (activeOperation?.child === child) activeOperation = null;
@@ -136,4 +215,13 @@ function apply(ctx) {
 
 const inject = [];
 
-export { apply, inject, profilePnpmMajor, runPlugin, selectPnpmMajor };
+export {
+  apply,
+  inject,
+  packageManagerEnvironment,
+  profilePnpmMajor,
+  readProfileSnapshot,
+  reconcileProfileBundles,
+  runPlugin,
+  selectPnpmMajor,
+};

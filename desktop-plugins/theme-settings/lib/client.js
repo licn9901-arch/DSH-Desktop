@@ -24,7 +24,7 @@ window.__ModuleLoader__.load({
 .dsh_desktop_plugin_copy{display:flex;flex-direction:column;gap:3px;min-width:0}
 .dsh_desktop_plugin_name{font-size:15px;color:var(--dsw-alias-label-primary);font-weight:600}
 .dsh_desktop_plugin_package{font-size:12px;color:var(--dsw-alias-label-tertiary);overflow-wrap:anywhere}
-.dsh_desktop_switch{position:relative;width:42px;height:24px;border:0;border-radius:12px;padding:0;background:var(--dsw-alias-bg-layer-2,#d1d5db);cursor:pointer;flex:0 0 auto}
+.dsh_desktop_switch{position:relative;width:42px;height:24px;border:1px solid var(--dsw-alias-border-l2,#b8bec8);border-radius:12px;padding:0;background:#c7ccd4;cursor:pointer;flex:0 0 auto}
 .dsh_desktop_switch[aria-checked="true"]{background:var(--dsw-alias-state-business-primary,#4f6ef7)}
 .dsh_desktop_switch:disabled{cursor:not-allowed;opacity:.5}
 .dsh_desktop_switch span{position:absolute;width:18px;height:18px;left:3px;top:3px;border-radius:50%;background:#fff;transition:transform .16s}
