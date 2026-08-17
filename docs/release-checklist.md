@@ -2,7 +2,7 @@
 
 ## 代码与依赖
 
-- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.5`。
+- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.6`。
 - [ ] `runtime.lock.json`、Node SHA-256、DSH、DSH Market 与 pnpm package lock 完全匹配。
 - [ ] `plugins.lock.json`、GitHub 归档 SHA-256、npm integrity 与插件 package lock 完全匹配。
 - [ ] staged 边界不包含 `resources`、`.runtime-cache`、`target`、日志、本机路径或安装包。
@@ -13,6 +13,7 @@
 - [ ] `cargo fmt --check`、Clippy `-D warnings`、`cargo test --locked` 通过。
 - [ ] 核心 Rust 库行覆盖率不低于 80%。
 - [ ] fake Host 冒烟验证就绪、单实例、关闭到托盘和显式退出。
+- [ ] 隔离的 pnpm 10 profile 通过 Market 完成 `dsh-pet` 安装与卸载，且不触碰真实 `$DSH_HOME`。
 - [ ] 安装器冒烟验证安装、内置运行时启动、生命周期、卸载和无残留进程。
 - [ ] 缺少任一内置运行时关键文件时构建失败。
 - [ ] 原始 `dshmarket@1.9.0` 客户端注册 ID 与活动 Cordis entry 一致，不存在桌面改名副本。

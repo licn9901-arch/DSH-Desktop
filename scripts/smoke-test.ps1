@@ -1,7 +1,8 @@
 param(
     [string]$Exe = '..\src-tauri\target\debug\dsh-desktop.exe',
     [int]$TimeoutSeconds = 30,
-    [switch]$UseBundledRuntime
+    [switch]$UseBundledRuntime,
+    [switch]$TestMarket
 )
 
 $ErrorActionPreference = 'Stop'
@@ -42,7 +43,72 @@ $hostProcessId = $null
 $secondaryProcesses = @()
 $succeeded = $false
 
+# 通过 Market 自身 HTTP API 安装并卸载测试插件，覆盖 UI 实际使用的完整包管理链路。
+function Invoke-MarketSmoke {
+    param(
+        [Parameter(Mandatory = $true)][string]$BaseUrl,
+        [Parameter(Mandatory = $true)][string]$ProfileDirectory,
+        [Parameter(Mandatory = $true)][int]$RequestTimeoutSeconds
+    )
+
+    $registry = Invoke-RestMethod -Uri "$BaseUrl/dsh-market/registry" -TimeoutSec 15
+    $entry = $registry.registry.plugins |
+        Where-Object { $_.npm -eq 'dsh-pet' -and $_.url -eq 'https://github.com/PC2005-cloud/dsh-pet/tree/main/dsh-pet' } |
+        Select-Object -First 1
+    if (-not $entry) {
+        throw 'Market smoke could not find the locked dsh-pet registry entry.'
+    }
+
+    $headers = @{ Origin = $BaseUrl }
+    try {
+        $install = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$BaseUrl/dsh-market/install" `
+            -Headers $headers `
+            -ContentType 'application/json' `
+            -Body (@{ url = $entry.url } | ConvertTo-Json -Compress) `
+            -TimeoutSec $RequestTimeoutSeconds
+        if (-not $install.ok) {
+            throw "Market returned an unsuccessful install result: $($install | ConvertTo-Json -Depth 8 -Compress)"
+        }
+
+        $manifest = Get-Content -LiteralPath (Join-Path $ProfileDirectory 'package.json') -Raw | ConvertFrom-Json
+        if (-not $manifest.dependencies.'dsh-pet') {
+            throw 'Market reported success but dsh-pet is absent from profile dependencies.'
+        }
+
+        $uninstall = Invoke-RestMethod `
+            -Method Post `
+            -Uri "$BaseUrl/dsh-market/uninstall" `
+            -Headers $headers `
+            -ContentType 'application/json' `
+            -Body (@{ name = 'dsh-pet' } | ConvertTo-Json -Compress) `
+            -TimeoutSec $RequestTimeoutSeconds
+        if (-not $uninstall.ok) {
+            throw "Market returned an unsuccessful uninstall result: $($uninstall | ConvertTo-Json -Depth 8 -Compress)"
+        }
+
+        $manifest = Get-Content -LiteralPath (Join-Path $ProfileDirectory 'package.json') -Raw | ConvertFrom-Json
+        if ($manifest.dependencies.'dsh-pet') {
+            throw 'Market reported successful uninstall but dsh-pet remains in profile dependencies.'
+        }
+    }
+    catch {
+        $marketLog = try {
+            (Invoke-WebRequest -UseBasicParsing "$BaseUrl/dsh-market/logs" -TimeoutSec 10).Content
+        }
+        catch {
+            'Market log endpoint was unavailable.'
+        }
+        throw "Market install/uninstall smoke failed: $($_.Exception.Message)`n$marketLog"
+    }
+}
+
 try {
+    if ($TestMarket -and -not $UseBundledRuntime) {
+        throw 'Market smoke requires -UseBundledRuntime.'
+    }
+
     # WebView2 依赖真实 Windows 用户目录；只隔离 DSH_HOME，避免伪造用户身份导致初始化阻塞。
     $env:DSH_HOME = Join-Path $smokeRoot '.dsh'
     $env:DSH_DESKTOP_LOG_DIR = $logDirectory
@@ -57,6 +123,20 @@ try {
     $env:DSH_DESKTOP_CWD = $workingDirectory
     $env:DSH_DESKTOP_USER_HOME = $smokeRoot
     $env:DSH_DESKTOP_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
+
+    if ($TestMarket) {
+        # 模拟由 pnpm 10 创建的已有 profile，防止未来再次把 JSON 元数据误判为新 profile。
+        $modulesDirectory = Join-Path $env:DSH_HOME 'profiles\web\node_modules'
+        New-Item -ItemType Directory -Force -Path $modulesDirectory | Out-Null
+        [ordered]@{
+            layoutVersion = 5
+            nodeLinker = 'hoisted'
+            packageManager = 'pnpm@10.33.2'
+            storeDir = Join-Path $env:LOCALAPPDATA 'pnpm\store\v10'
+            virtualStoreDir = Join-Path $modulesDirectory '.pnpm'
+            virtualStoreDirMaxLength = 60
+        } | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $modulesDirectory '.modules.yaml') -Encoding utf8NoBOM
+    }
 
     $desktopProcess = Start-Process -FilePath $exePath -PassThru
     $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
@@ -84,6 +164,18 @@ try {
     }
     if (-not $ready -or -not $hostProcessId) {
         throw 'Timed out waiting for Host readiness and PID log.'
+    }
+
+    if ($TestMarket) {
+        $urlMatch = [regex]::Match($content, 'host ready: (http://127\.0\.0\.1:\d+)')
+        if (-not $urlMatch.Success) {
+            throw 'Could not read the ready URL for Market smoke.'
+        }
+        Invoke-MarketSmoke `
+            -BaseUrl $urlMatch.Groups[1].Value `
+            -ProfileDirectory (Join-Path $env:DSH_HOME 'profiles\web') `
+            -RequestTimeoutSeconds ([Math]::Max(120, $TimeoutSeconds))
+        Write-Host 'MARKET SMOKE OK: pnpm 10 profile installed and uninstalled dsh-pet through Market.'
     }
 
     # 二次启动必须快速退出，并由现有实例处理聚焦，不能再创建 Host。

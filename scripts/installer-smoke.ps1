@@ -105,7 +105,8 @@ try {
     & (Join-Path $PSScriptRoot 'smoke-test.ps1') `
         -Exe $installedExe `
         -TimeoutSeconds $TimeoutSeconds `
-        -UseBundledRuntime
+        -UseBundledRuntime `
+        -TestMarket
 }
 finally {
     if ($installed) {

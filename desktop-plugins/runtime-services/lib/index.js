@@ -14,16 +14,44 @@ function requiredAbsolutePath(name) {
   return value;
 }
 
-/** 从 pnpm modules 元数据读取创建该 profile 的 pnpm major。 */
-function selectPnpmMajor(text) {
-  if (typeof text !== "string" || text.trim() === "") return 11;
-  const match = text.match(/^packageManager:\s*["']?pnpm@(\d+)(?:\.|[+"']|$)/m);
-  if (match === null) return 11;
-  const major = Number(match[1]);
+/** 校验识别到的 pnpm major，避免用未知运行时改写现有 profile。 */
+function assertSupportedPnpmMajor(major) {
   if (!SUPPORTED_PNPM_MAJORS.has(major)) {
     throw new Error(`unsupported profile pnpm major: ${major}; supported majors are 9, 10 and 11`);
   }
   return major;
+}
+
+/** 从 packageManager 字符串读取 pnpm major。 */
+function packageManagerMajor(value) {
+  if (typeof value !== "string") return null;
+  const match = /^pnpm@(\d+)(?:\.|\+|$)/.exec(value.trim());
+  return match === null ? null : assertSupportedPnpmMajor(Number(match[1]));
+}
+
+/** 从 pnpm modules 元数据读取创建该 profile 的 pnpm major。 */
+function selectPnpmMajor(text) {
+  if (typeof text !== "string" || text.trim() === "") return 11;
+
+  // pnpm 当前把 .modules.yaml 写成 JSON；先结构化解析，避免依赖展示格式。
+  try {
+    const metadata = JSON.parse(text);
+    const managerMajor = packageManagerMajor(metadata?.packageManager);
+    if (managerMajor !== null) return managerMajor;
+    const storeMatch = /[\\/]store[\\/]v(\d+)(?:[\\/]|$)/i.exec(metadata?.storeDir ?? "");
+    if (storeMatch !== null) return assertSupportedPnpmMajor(Number(storeMatch[1]));
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) throw error;
+  }
+
+  // 兼容旧 pnpm 写出的 YAML，以及人为维护的最小 modules 元数据。
+  const managerMatch = /^\s*["']?packageManager["']?\s*:\s*["']?(pnpm@\d+(?:\.[^\s"']*)?)/m.exec(text);
+  const managerMajor = packageManagerMajor(managerMatch?.[1]);
+  if (managerMajor !== null) return managerMajor;
+
+  const storeMatch = /^\s*["']?storeDir["']?\s*:\s*["']?.*?[\\/]store[\\/]v(\d+)(?:[\\/"']|$)/im.exec(text);
+  if (storeMatch !== null) return assertSupportedPnpmMajor(Number(storeMatch[1]));
+  return 11;
 }
 
 /** 缺少 modules 元数据的新 profile 使用当前固定的 pnpm 11。 */

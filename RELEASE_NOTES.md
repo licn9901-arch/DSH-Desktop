@@ -1,9 +1,11 @@
-# DeepSeek Harness Desktop v0.1.0-preview.5
+# DeepSeek Harness Desktop v0.1.0-preview.6
 
 这是 Windows x64 社区预览版。本项目不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
 ## 本版内容
 
+- 修正已有 pnpm 9/10 profile 的元数据识别，Market 不再误用 pnpm 11 而触发 `Unexpected store location`。
+- 发布前新增真实 Market 安装门禁：在隔离 profile 中安装并卸载 `dsh-pet`，通过后才构建 NSIS。
 - 内置 Market 升级到原始 `dshmarket@1.9.0`，由受保护的桌面 Runtime Services 提供 profile
   与固定 pnpm。已有 pnpm 9/10/11 profile 会选择相同 major，新 profile 默认使用 11。
 - 设置新增“项目记忆”一级入口，可配置 Hindsight Cloud 或自托管地址、只写 API Token，

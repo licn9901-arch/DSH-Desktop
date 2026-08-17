@@ -292,22 +292,16 @@ impl PluginManager {
                     profile_modules.display()
                 )
             })?;
-            for (name, content) in [
-                (
-                    "cordis.patch.yml",
-                    b"# DSH web profile user patch layer.\n[]\n".as_slice(),
-                ),
-                (
-                    "pnpm-workspace.yaml",
-                    b"packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n"
-                        .as_slice(),
-                ),
-            ] {
-                let path = self.web_profile.join(name);
-                if !path.exists() {
-                    transaction.snapshots.push(FileSnapshot::capture(&path)?);
-                    atomic_write(&path, content)?;
-                }
+            // 用户 patch 是可选文件；不预写 `[]`，避免第三方在其后追加顶层列表时产生非法 YAML。
+            let workspace_path = self.web_profile.join("pnpm-workspace.yaml");
+            if !workspace_path.exists() {
+                transaction
+                    .snapshots
+                    .push(FileSnapshot::capture(&workspace_path)?);
+                atomic_write(
+                    &workspace_path,
+                    b"packages:\n  - .\n\nnodeLinker: hoisted\nautoInstallPeers: false\n",
+                )?;
             }
 
             for package in &plan.removed_packages {
@@ -1624,7 +1618,7 @@ mod tests {
               "schemaVersion": 1,
               "sharedPackages": ["@deepseek-ai", "react", "react-dom"],
               "plugins": [
-                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.5","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
+                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.6","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
@@ -2336,6 +2330,10 @@ mod tests {
             .path()
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .is_file());
+        assert!(!root
+            .path()
+            .join("home/.dsh/profiles/web/cordis.patch.yml")
+            .exists());
     }
 
     #[test]

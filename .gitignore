@@ -4,6 +4,8 @@ src-tauri/gen/
 src-tauri/resources/
 .runtime-cache/
 .deploy-artifacts/
+.installer-smoke-*/
+.pre-nsis-*/
 .tools/
 *.log
 .env
