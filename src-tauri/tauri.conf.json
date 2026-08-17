@@ -14,7 +14,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": ["nsis"],
+    "targets": ["nsis", "app"],
     "category": "DeveloperTool",
     "shortDescription": "DeepSeek Harness desktop client",
     "resources": {

@@ -124,22 +124,41 @@ pub fn quit_application(app: &AppHandle) {
     app.exit(0);
 }
 
-/// 把外部 HTTP/HTTPS 地址交给 Windows 默认浏览器，不在 WebView 内加载。
+/// 把外部 HTTP/HTTPS 地址交给当前系统默认浏览器，不在 WebView 内加载。
 pub fn open_external_url(url: &url::Url) {
+    #[cfg(windows)]
     let _ = Command::new("rundll32.exe")
         .args(["url.dll,FileProtocolHandler", url.as_str()])
         .spawn();
+
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open").arg(url.as_str()).spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = Command::new("xdg-open").arg(url.as_str()).spawn();
 }
 
-/// 使用资源管理器定位日志文件，避免把日志内容暴露给 WebView。
+/// 使用系统文件管理器定位日志文件，避免把日志内容暴露给 WebView。
 fn open_log_file() {
     let path = log_file_path();
     let _ = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(&path);
-    let argument = format!("/select,{}", path.display());
-    let _ = Command::new("explorer.exe").arg(argument).spawn();
+    #[cfg(windows)]
+    let _ = Command::new("explorer.exe")
+        .arg(format!("/select,{}", path.display()))
+        .spawn();
+
+    #[cfg(target_os = "macos")]
+    let _ = Command::new("open")
+        .args(["-R", &path.to_string_lossy()])
+        .spawn();
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let _ = Command::new("xdg-open")
+        .arg(path.parent().unwrap_or_else(|| std::path::Path::new(".")))
+        .spawn();
 }
 
 /// 显示版本与非官方声明，不向远程页面暴露任何命令。

@@ -5,7 +5,7 @@
 </p>
 
 <p align="center">
-  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows 桌面封装。
+  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows/macOS 桌面封装。
 </p>
 
 <p align="center">
@@ -22,11 +22,14 @@
 
 项目官网：[https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 
-从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
-`DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
+从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载对应平台的安装包：
+Windows 使用 `DeepSeek Harness Desktop_*_x64-setup.exe`，macOS 使用
+`DeepSeek Harness Desktop_*_aarch64.dmg`（Apple Silicon）或同版本的 Intel 构建。
+当前 macOS 本地构建默认按当前机器架构生成；预览版不提供 Linux 包。
 
-`v0.1.0-preview.7` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
-请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
+`v0.1.0-preview.7` 未使用 Authenticode 或 Apple Developer ID 签名/公证，Windows SmartScreen
+或 macOS Gatekeeper 可能显示未知发布者提示。请在 Release 页面核对同名 `.sha256` 文件后再运行安装包；
+macOS 首次打开 DMG 中的应用时，在系统安全设置中确认允许打开未签名应用。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
 `dshmarket 1.9.0` 与 `pnpm 11.22.0`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
@@ -34,7 +37,7 @@
 
 ## 主要功能
 
-- 一键启动本地 `dsh web`，等待严格校验的回环地址后在 WebView2 中加载。
+- 一键启动本地 `dsh web`，等待严格校验的回环地址后在系统 WebView 中加载（Windows 使用 WebView2，macOS 使用 WKWebView）。
 - 单实例运行：再次启动只恢复并聚焦现有窗口，不创建第二个 Host。
 - 关闭主窗口后隐藏到系统托盘，任务继续运行；只有托盘“退出”才清理 Host。
 - 托盘可串行重启 DSH 服务；新 PID 和随机端口就绪后自动恢复 WebView。
@@ -87,7 +90,7 @@ flowchart LR
     A -->|"atomic managed profile"| P["Pinned offline plugins"]
     P --> B
     B -->|"dsh web: loopback URL"| C["Strict readiness parser"]
-    C -->|"same origin only"| D["WebView2"]
+    C -->|"same origin only"| D["System WebView"]
     D -->|"external HTTP(S)"| E["System browser"]
     A -->|"explicit quit"| F["Graceful then process-tree cleanup"]
 ```
@@ -103,19 +106,19 @@ node --expose-internals <bundled-dsh>/lib/bin.js web --patch <desktop-policy> --
 
 ## 与上游项目的关系
 
-本仓库只维护 Tauri 桌面壳、进程生命周期、自包含运行时、日志、安全边界和 Windows 发布流程。
+本仓库只维护 Tauri 桌面壳、进程生命周期、自包含运行时、日志、安全边界和 Windows/macOS 发布流程。
 它不修改 DSH Web UI，也不修改 Agent 核心能力。DSH、DSH Market、pnpm 与 Web 前端按
 `runtime.lock.json` 固定版本并遵循各自上游许可证。
 
 ## 从源码开发
 
-环境要求：PowerShell 7、Node.js `22.22.3`、Rust `1.94.1`、MSVC C++ Build Tools 和 WebView2。
+Windows 开发环境要求 PowerShell 7、Node.js `22.22.3`、Rust `1.94.1`、MSVC C++ Build Tools 和 WebView2；macOS 开发环境要求 Node.js `22.22.3`、Rust `1.94.1`、Xcode Command Line Tools 和系统 WebKit。构建暂存与校验脚本使用 Node.js，可在 Windows 和 macOS 直接运行。
 
-```powershell
+```sh
 git clone https://github.com/licn9901-arch/DSH-Desktop.git
-Set-Location DSH-Desktop
+cd DSH-Desktop
 npm ci
-.\dev.cmd
+npm run dev
 ```
 
 开发构建允许以下覆盖项，发布构建会忽略 Node 与 CLI 覆盖并只使用内置运行时：
@@ -130,7 +133,7 @@ npm ci
 
 ### 构建自包含安装包
 
-```powershell
+```sh
 npm ci
 npm run build
 ```
@@ -140,29 +143,27 @@ integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管
 归档与 npm integrity。三组固定 lockfile 分别执行 `npm ci`；插件组额外使用
 `--omit=dev --ignore-scripts`。Node、DSH CLI、Web 前端、插件本地资产、PTY 和许可证全部验证后
 才调用 Tauri 打包。
-暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
-`src-tauri/target/release/bundle/nsis`。
+暂存资源写入被 Git 忽略的 `src-tauri/resources`。Windows NSIS 安装包输出到
+`src-tauri/target/release/bundle/nsis`，macOS DMG 输出到
+`src-tauri/target/release/bundle/dmg`。默认按当前构建机架构选择 Node 运行时；交叉构建时可用
+`DSH_DESKTOP_NODE_TARGET=darwin-x64` 或 `darwin-arm64` 明确指定目标。
 
 已有缓存时可离线暂存：
 
-```powershell
-pwsh -NoProfile -File .\scripts\stage-runtime.ps1 -Offline
-pwsh -NoProfile -File .\scripts\stage-plugins.ps1 -Offline
+```sh
+npm run stage:runtime -- --offline
+npm run stage:plugins -- --offline
 ```
 
 ## 测试与质量门禁
 
-```powershell
+```sh
 npm run validate:icons
 npm run lint
 npm test
 npm audit
-Push-Location runtime-host
-npm audit --omit=dev
-Pop-Location
-Push-Location plugin-runtime
-npm audit --omit=dev
-Pop-Location
+(cd runtime-host && npm audit --omit=dev)
+(cd plugin-runtime && npm audit --omit=dev)
 npm run coverage
 npm run smoke
 ```
@@ -172,7 +173,8 @@ npm run smoke
 
 ## 日志与故障排查
 
-日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`。
+日志位于 Windows `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`，macOS
+`~/Library/Logs/dsh-desktop/dsh-desktop.log`；也可用 `DSH_DESKTOP_LOG_DIR` 指定目录。
 
 - 启动失败：查看日志中的 `level=ERROR`、Host PID 和真实退出码。
 - 市场显示“状态未知”：表示 registry 或版本检查失败，不等同于“已是最新”。
@@ -193,7 +195,7 @@ npm run smoke
 
 ## 当前边界
 
-- 仅支持 Windows x64，不支持 macOS、Linux 或 ARM64。
+- 当前支持 Windows x64、macOS Intel x64 和 macOS Apple Silicon arm64；不提供 Linux 包。
 - 不包含自动更新、开机自启、插件签名验证、权限沙箱、手机远控或 Channels。
 - 本机已有的 `0.1.0` 原型不保证原地升级；测试预览版前请先卸载原型并保留用户数据。
 
