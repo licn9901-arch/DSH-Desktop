@@ -1,0 +1,2 @@
+#!/bin/sh
+exec "$DSH_DESKTOP_NODE_EXECUTABLE" "$(dirname "$0")/../../node_modules/pnpm-10/bin/pnpm.cjs" "$@"

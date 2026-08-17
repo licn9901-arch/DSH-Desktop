@@ -40,12 +40,32 @@ pub fn log_file_path() -> PathBuf {
         let _ = fs::create_dir_all(&directory);
         return directory.join("dsh-desktop.log");
     }
+    let dir = platform_log_directory();
+    let _ = fs::create_dir_all(&dir);
+    dir.join("dsh-desktop.log")
+}
+
+#[cfg(windows)]
+fn platform_log_directory() -> PathBuf {
     let base = env::var("LOCALAPPDATA")
         .or_else(|_| env::var("TEMP"))
         .unwrap_or_else(|_| ".".into());
-    let dir = Path::new(&base).join("dsh-desktop");
-    let _ = fs::create_dir_all(&dir);
-    dir.join("dsh-desktop.log")
+    Path::new(&base).join("dsh-desktop")
+}
+
+#[cfg(target_os = "macos")]
+fn platform_log_directory() -> PathBuf {
+    env::var("HOME")
+        .map(|home| Path::new(&home).join("Library/Logs/dsh-desktop"))
+        .unwrap_or_else(|_| PathBuf::from("."))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_log_directory() -> PathBuf {
+    env::var("XDG_STATE_HOME")
+        .map(|state| Path::new(&state).join("dsh-desktop"))
+        .or_else(|_| env::var("HOME").map(|home| Path::new(&home).join(".local/state/dsh-desktop")))
+        .unwrap_or_else(|_| PathBuf::from("."))
 }
 
 /// 追加一行普通桌面应用日志。

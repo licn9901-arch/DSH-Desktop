@@ -1,6 +1,6 @@
 # DeepSeek Harness Desktop v0.1.0-preview.7
 
-这是 Windows x64 社区预览版。本项目不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
+这是 Windows x64 与 macOS（Intel/Apple Silicon）社区预览版。本项目不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
 ## 本版内容
 
@@ -25,8 +25,8 @@
 
 ## 安装提示
 
-- 支持 Windows 10 22H2 / Windows 11 x64。
-- 安装包没有 Authenticode 签名，SmartScreen 可能显示未知发布者。
+- 支持 Windows 10 22H2 / Windows 11 x64，以及 macOS Intel x64 / Apple Silicon arm64。
+- Windows 安装包没有 Authenticode 签名，macOS 应用没有 Apple Developer ID 签名或公证，SmartScreen 或 Gatekeeper 可能显示未知发布者。
 - 请先核对随 Release 提供的 `.sha256` 文件。
 - 设置变更后，请从托盘选择“重启 DSH 服务”。
 - 卸载不会删除 DSH 用户会话、profile、插件状态、Skill 或第三方配置。

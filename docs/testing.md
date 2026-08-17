@@ -2,14 +2,14 @@
 
 ## 固定命令
 
-```powershell
+```sh
 npm ci
 npm run validate:icons
 npm run lint
 npm test
 npm audit
-Push-Location runtime-host; npm audit --omit=dev; Pop-Location
-Push-Location plugin-runtime; npm audit --omit=dev; Pop-Location
+(cd runtime-host && npm audit --omit=dev)
+(cd plugin-runtime && npm audit --omit=dev)
 npm run stage:runtime
 npm run stage:plugins
 npm run coverage
@@ -45,3 +45,8 @@ Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 脚本失败兜底只终止本次记录的桌面 PID 与 Host PID，禁止扫描或批量终止其他 `node.exe`。
 
 发布验证先用 fake Host 检查可注入 supervisor 和侧栏设置 API，再安装 NSIS 包并用内置 Node/DSH/插件重跑同一套生命周期检查。卸载检查验证本应用安装目录被移除，且不触碰 DSH 用户会话、profile、插件 marker 与配置。
+
+macOS 构建使用同一套 Node 暂存与 Rust 测试门禁，额外检查 `src-tauri/target/release/bundle/dmg`
+中的 DMG 可被 `hdiutil imageinfo` 读取、`.app/Contents/Resources` 存在，并确认内置
+`node/bin/node`、`darwin-x64` 或 `darwin-arm64` 的 `node-pty` 预构建文件和 DMG 资源完整。
+当前仓库没有 macOS UI 自动化冒烟脚本，首次启动、托盘、外部链接和显式退出需在目标 macOS 架构上人工确认。
