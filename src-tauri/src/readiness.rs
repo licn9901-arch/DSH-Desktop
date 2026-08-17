@@ -2,7 +2,19 @@
 
 use std::fmt;
 
-const READY_PREFIX: &str = "dsh web: ";
+const CORE_READY_PREFIX: &str = "dsh desktop-core: ";
+const PLUGINS_READY_PREFIX: &str = "dsh web: ";
+
+/// Host 两级就绪协议解析结果。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadinessSignal {
+    /// 核心 Web 服务已可交互，桌面壳可以立即导航。
+    CoreReady(String),
+    /// 新协议下全部 Loader 插件已经完成。
+    PluginsReady(String),
+    /// 旧 Host 只输出 `dsh web:`，同时视为核心与插件就绪。
+    LegacyReady(String),
+}
 
 /// Host 就绪协议中的不可恢复错误。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -29,6 +41,8 @@ impl fmt::Display for ReadinessError {
 #[derive(Debug, Default)]
 pub struct ReadinessParser {
     ready_url: Option<String>,
+    core_ready: bool,
+    plugins_ready: bool,
 }
 
 impl ReadinessParser {
@@ -38,8 +52,13 @@ impl ReadinessParser {
     }
 
     /// 严格解析单行日志，并拒绝冲突的重复地址。
-    pub fn parse_line(&mut self, line: &str) -> Result<Option<String>, ReadinessError> {
-        let Some(candidate) = line.strip_prefix(READY_PREFIX) else {
+    pub fn parse_line(&mut self, line: &str) -> Result<Option<ReadinessSignal>, ReadinessError> {
+        let (candidate, core_signal) = if let Some(candidate) = line.strip_prefix(CORE_READY_PREFIX)
+        {
+            (candidate, true)
+        } else if let Some(candidate) = line.strip_prefix(PLUGINS_READY_PREFIX) {
+            (candidate, false)
+        } else {
             return Ok(None);
         };
         let Ok(parsed) = url::Url::parse(candidate.trim()) else {
@@ -68,34 +87,102 @@ impl ReadinessParser {
         match &self.ready_url {
             None => {
                 self.ready_url = Some(ready_url.clone());
-                Ok(Some(ready_url))
             }
-            Some(existing) if existing == &ready_url => Ok(None),
+            Some(existing) if existing == &ready_url => {}
             Some(existing) => Err(ReadinessError::ConflictingUrls {
                 first: existing.clone(),
-                second: ready_url,
-            }),
+                second: ready_url.clone(),
+            })?,
         }
+
+        if core_signal {
+            if self.core_ready {
+                return Ok(None);
+            }
+            self.core_ready = true;
+            return Ok(Some(ReadinessSignal::CoreReady(ready_url)));
+        }
+
+        if self.plugins_ready {
+            return Ok(None);
+        }
+        self.plugins_ready = true;
+        let legacy = !self.core_ready;
+        self.core_ready = true;
+        Ok(Some(if legacy {
+            ReadinessSignal::LegacyReady(ready_url)
+        } else {
+            ReadinessSignal::PluginsReady(ready_url)
+        }))
     }
 
-    /// 返回是否已经识别到过就绪地址。
-    pub fn is_ready(&self) -> bool {
-        self.ready_url.is_some()
+    /// 返回是否已经识别到核心就绪地址。
+    pub fn is_core_ready(&self) -> bool {
+        self.core_ready
+    }
+
+    /// 返回是否已经识别到全部插件就绪信号。
+    pub fn is_plugins_ready(&self) -> bool {
+        self.plugins_ready
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ReadinessError, ReadinessParser};
+    use super::{ReadinessError, ReadinessParser, ReadinessSignal};
+
+    #[test]
+    fn parses_core_then_plugins_readiness_once() {
+        let mut parser = ReadinessParser::new();
+        assert_eq!(
+            parser
+                .parse_line("dsh desktop-core: http://127.0.0.1:4321")
+                .unwrap(),
+            Some(ReadinessSignal::CoreReady(
+                "http://127.0.0.1:4321".to_owned()
+            ))
+        );
+        assert_eq!(
+            parser
+                .parse_line("dsh desktop-core: http://127.0.0.1:4321")
+                .unwrap(),
+            None
+        );
+        assert_eq!(
+            parser.parse_line("dsh web: http://127.0.0.1:4321").unwrap(),
+            Some(ReadinessSignal::PluginsReady(
+                "http://127.0.0.1:4321".to_owned()
+            ))
+        );
+        assert!(parser.is_core_ready());
+        assert!(parser.is_plugins_ready());
+    }
+
+    #[test]
+    fn legacy_plugins_signal_also_marks_core_ready() {
+        let mut parser = ReadinessParser::new();
+        assert_eq!(
+            parser
+                .parse_line("dsh web: http://localhost:4321/")
+                .unwrap(),
+            Some(ReadinessSignal::LegacyReady(
+                "http://localhost:4321".to_owned()
+            ))
+        );
+        assert!(parser.is_core_ready());
+        assert!(parser.is_plugins_ready());
+    }
 
     #[test]
     fn accepts_only_exact_prefixed_loopback_urls() {
         let mut parser = ReadinessParser::new();
         assert_eq!(
             parser.parse_line("dsh web: http://127.0.0.1:4321").unwrap(),
-            Some("http://127.0.0.1:4321".to_owned())
+            Some(ReadinessSignal::LegacyReady(
+                "http://127.0.0.1:4321".to_owned()
+            ))
         );
-        assert!(parser.is_ready());
+        assert!(parser.is_core_ready());
     }
 
     #[test]
@@ -135,11 +222,11 @@ mod tests {
     fn permits_same_duplicate_and_rejects_conflicting_duplicate() {
         let mut parser = ReadinessParser::new();
         parser
-            .parse_line("dsh web: http://localhost:4321/")
+            .parse_line("dsh desktop-core: http://localhost:4321/")
             .unwrap();
         assert_eq!(
             parser
-                .parse_line("dsh web: http://localhost:4321/")
+                .parse_line("dsh desktop-core: http://localhost:4321/")
                 .unwrap(),
             None
         );

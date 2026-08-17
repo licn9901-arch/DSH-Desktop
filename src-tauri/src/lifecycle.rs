@@ -135,8 +135,10 @@ impl HostController {
 /// Host 监督线程向应用主流程发送的事件。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HostEvent {
-    /// Host 已输出可加载的回环地址。
-    Ready(String),
+    /// Host 核心服务已输出可加载的回环地址。
+    CoreReady(String),
+    /// Host 全部 Loader 插件已经完成。
+    PluginsReady(String),
     /// Host 进程已经结束。
     Exited(Option<i32>),
     /// Host 输出了互相冲突的就绪地址。
@@ -161,6 +163,10 @@ pub enum LifecycleAction {
     Ignore,
     /// 导航到已验证的 Host 地址。
     Navigate(String),
+    /// 全部插件已经完成，可以提交托管插件事务。
+    PluginsReady,
+    /// 插件阶段失败或超时，但核心页面仍可继续使用。
+    PluginDegraded { message: String },
     /// 以明确原因和可诊断消息结束应用。
     Fail {
         reason: ShutdownReason,
@@ -169,16 +175,41 @@ pub enum LifecycleAction {
 }
 
 /// 将启动与运行期 Host 事件归一为确定性动作，避免线程时序改变结果。
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HostStartupPhase {
+    /// 正在等待核心 Web 服务。
+    StartingCore,
+    /// 核心页面可交互，插件仍可能在后台加载。
+    CoreReady,
+    /// 全部 Loader 插件已经完成。
+    PluginsReady,
+}
+
+/// 两级就绪状态机，确保插件失败不会错误地终止可用核心页面。
+#[derive(Debug)]
 pub struct LifecycleStateMachine {
-    ready: bool,
+    phase: HostStartupPhase,
     terminated: bool,
+}
+
+impl Default for LifecycleStateMachine {
+    fn default() -> Self {
+        Self {
+            phase: HostStartupPhase::StartingCore,
+            terminated: false,
+        }
+    }
 }
 
 impl LifecycleStateMachine {
     /// 创建等待 Host 就绪的状态机。
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// 返回当前启动阶段，供协调线程选择核心或插件超时策略。
+    pub fn phase(&self) -> HostStartupPhase {
+        self.phase
     }
 
     /// 处理一个 Host 事件；显式退出期间的迟到事件一律忽略。
@@ -188,14 +219,22 @@ impl LifecycleStateMachine {
         }
 
         match event {
-            HostEvent::Ready(url) if !self.ready => {
-                self.ready = true;
+            HostEvent::CoreReady(url) if self.phase == HostStartupPhase::StartingCore => {
+                self.phase = HostStartupPhase::CoreReady;
                 LifecycleAction::Navigate(url)
             }
-            HostEvent::Ready(_) => LifecycleAction::Ignore,
+            HostEvent::CoreReady(_) => LifecycleAction::Ignore,
+            HostEvent::PluginsReady(_) if self.phase == HostStartupPhase::StartingCore => {
+                LifecycleAction::Ignore
+            }
+            HostEvent::PluginsReady(_) if self.phase == HostStartupPhase::CoreReady => {
+                self.phase = HostStartupPhase::PluginsReady;
+                LifecycleAction::PluginsReady
+            }
+            HostEvent::PluginsReady(_) => LifecycleAction::Ignore,
             HostEvent::Exited(exit_code) => {
                 self.terminated = true;
-                let reason = if self.ready {
+                let reason = if self.phase != HostStartupPhase::StartingCore {
                     ShutdownReason::HostExited
                 } else {
                     ShutdownReason::StartupFailure
@@ -204,7 +243,7 @@ impl LifecycleStateMachine {
                     reason,
                     message: format!(
                         "DeepSeek Harness exited {} (exit code: {exit_code:?}).",
-                        if self.ready {
+                        if self.phase != HostStartupPhase::StartingCore {
                             "unexpectedly"
                         } else {
                             "before becoming ready"
@@ -215,7 +254,7 @@ impl LifecycleStateMachine {
             HostEvent::ProtocolError(message) => {
                 self.terminated = true;
                 LifecycleAction::Fail {
-                    reason: if self.ready {
+                    reason: if self.phase != HostStartupPhase::StartingCore {
                         ShutdownReason::HostExited
                     } else {
                         ShutdownReason::StartupFailure
@@ -228,13 +267,23 @@ impl LifecycleStateMachine {
 
     /// 处理就绪等待超时；就绪后或退出期间的超时不会改变状态。
     pub fn on_timeout(&mut self, shutting_down: bool, seconds: u64) -> LifecycleAction {
-        if shutting_down || self.ready || self.terminated {
+        if shutting_down || self.phase != HostStartupPhase::StartingCore || self.terminated {
             return LifecycleAction::Ignore;
         }
         self.terminated = true;
         LifecycleAction::Fail {
             reason: ShutdownReason::StartupFailure,
             message: format!("DeepSeek Harness did not report a URL within {seconds} seconds."),
+        }
+    }
+
+    /// 处理插件完成超时；只降级插件，不终止已经可用的核心页面。
+    pub fn on_plugins_timeout(&mut self, shutting_down: bool, seconds: u64) -> LifecycleAction {
+        if shutting_down || self.phase != HostStartupPhase::CoreReady || self.terminated {
+            return LifecycleAction::Ignore;
+        }
+        LifecycleAction::PluginDegraded {
+            message: format!("DeepSeek Harness plugins did not finish within {seconds} seconds."),
         }
     }
 }
@@ -245,6 +294,36 @@ mod tests {
         HostEvent, HostRuntimeState, HostStateMachine, LifecycleAction, LifecycleStateMachine,
         ShutdownReason,
     };
+
+    #[test]
+    fn core_and_plugins_have_distinct_state_transitions() {
+        let mut machine = LifecycleStateMachine::new();
+        assert_eq!(machine.phase(), super::HostStartupPhase::StartingCore);
+        assert!(matches!(
+            machine.on_event(HostEvent::CoreReady("http://localhost:1".to_owned()), false),
+            LifecycleAction::Navigate(_)
+        ));
+        assert_eq!(machine.phase(), super::HostStartupPhase::CoreReady);
+        assert_eq!(
+            machine.on_event(
+                HostEvent::PluginsReady("http://localhost:1".to_owned()),
+                false
+            ),
+            LifecycleAction::PluginsReady
+        );
+        assert_eq!(machine.phase(), super::HostStartupPhase::PluginsReady);
+    }
+
+    #[test]
+    fn plugin_timeout_keeps_the_core_alive() {
+        let mut machine = LifecycleStateMachine::new();
+        machine.on_event(HostEvent::CoreReady("http://localhost:1".to_owned()), false);
+        assert!(matches!(
+            machine.on_plugins_timeout(false, 30),
+            LifecycleAction::PluginDegraded { .. }
+        ));
+        assert_eq!(machine.phase(), super::HostStartupPhase::CoreReady);
+    }
 
     #[test]
     fn timeout_is_a_startup_failure_without_waiting() {
@@ -271,7 +350,7 @@ mod tests {
 
         let mut running = LifecycleStateMachine::new();
         assert!(matches!(
-            running.on_event(HostEvent::Ready("http://localhost:1".to_owned()), false),
+            running.on_event(HostEvent::CoreReady("http://localhost:1".to_owned()), false),
             LifecycleAction::Navigate(_)
         ));
         assert!(matches!(

@@ -189,6 +189,16 @@ impl HostSupervisor {
         );
     }
 
+    /// 启动恢复时立即强制结束当前记录的进程树，避免等待已失效 Host 的优雅退出窗口。
+    pub fn shutdown_for_recovery(&self) {
+        self.shutdown_for_recovery_with(&WindowsProcessTreeTerminator);
+    }
+
+    /// 注入进程树终止器执行恢复清理，供单元测试确认只处理记录 PID。
+    fn shutdown_for_recovery_with(&self, terminator: &dyn ProcessTreeTerminator) {
+        self.shutdown_with(terminator, Duration::ZERO, Duration::ZERO);
+    }
+
     /// 使用指定终止器和时钟参数执行退出，供无固定等待的单元测试注入 fake。
     fn shutdown_with(
         &self,
@@ -439,7 +449,8 @@ mod tests {
             web_profile: std::env::temp_dir(),
             managed_plugins_root: std::env::temp_dir(),
             working_directory: std::env::temp_dir(),
-            readiness_timeout: Duration::from_secs(1),
+            core_ready_timeout: Duration::from_secs(1),
+            plugin_ready_timeout: Duration::from_secs(1),
         };
         let error = HostSupervisor::spawn(&paths).err().unwrap();
         assert!(error.contains("failed to start Node"));
@@ -461,7 +472,7 @@ mod tests {
     }
 
     #[test]
-    fn timeout_forces_only_the_recorded_process_tree() {
+    fn recovery_shutdown_forces_only_the_recorded_process_tree() {
         let supervisor = supervisor(FakeChild {
             pid: 44,
             polls: VecDeque::new(),
@@ -469,7 +480,7 @@ mod tests {
             forced: None,
         });
         let terminator = RecordingTerminator::default();
-        supervisor.shutdown_with(&terminator, Duration::ZERO, Duration::ZERO);
+        supervisor.shutdown_for_recovery_with(&terminator);
         assert_eq!(*terminator.requested.lock().unwrap(), vec![44]);
         assert_eq!(*terminator.forced.lock().unwrap(), vec![44]);
     }
@@ -505,7 +516,8 @@ mod tests {
             web_profile: std::env::temp_dir(),
             managed_plugins_root: std::env::temp_dir(),
             working_directory: std::env::temp_dir(),
-            readiness_timeout: Duration::from_secs(1),
+            core_ready_timeout: Duration::from_secs(1),
+            plugin_ready_timeout: Duration::from_secs(1),
         };
         let inherited = std::env::join_paths([
             std::path::Path::new(r"C:\Windows\System32"),

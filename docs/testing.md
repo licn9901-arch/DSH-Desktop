@@ -14,6 +14,7 @@ npm run stage:runtime
 npm run stage:plugins
 npm run coverage
 npm run smoke
+npm run smoke:startup
 ```
 
 `npm run coverage` 需要先安装 `llvm-tools-preview` 和 `cargo-llvm-cov`，并通过 `--fail-under-lines 80` 强制 Host、运行时、生命周期、导航、日志和就绪解析核心模块的行覆盖率不低于 80%。应用装配层 `desktop.rs`、`lib.rs`、`main.rs` 由 Windows 冒烟测试覆盖，不计入核心模块行覆盖率。发布前必须在本机完成两类门禁。
@@ -27,11 +28,13 @@ pwsh -NoProfile -File scripts/smoke-test.ps1 `
   -UseBundledRuntime
 pwsh -NoProfile -File scripts/installer-smoke.ps1 `
   -Installer 'src-tauri\target\release\bundle\nsis\<installer>.exe'
+pwsh -NoProfile -File scripts/benchmark-startup.ps1 `
+  -Exe '<安装目录>\dsh-desktop.exe'
 ```
 
 ## 覆盖范围
 
-Rust 单元测试覆盖严格就绪协议、Host 原点导航、私有 Node/pnpm PATH 优先级、Host 重启状态机、启动超时、启动失败、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖 9 个 bundle 的固定顺序、用户安装优先、禁用保持、旧 Skills/MCP 状态迁移、GenUI Skill 首装/升级/修改/删除、Skin patch 历史坏文件恢复、Hindsight 凭据注入、缺失资源、事务提交/回滚、Better Sidebar revision 设置和真实 Windows junction。桌面设置 bundle 的 Node 测试覆盖 allowlist、受保护项、未知包拒绝、只改 bundles、幂等与并发写，以及 Hindsight 字段保留、凭据不回显、URL/路径校验和连接测试。Host supervisor 通过注入 fake child 和 fake process-tree terminator 验证，不启动真实 DSH，也不使用固定等待时间。
+Rust 单元测试覆盖 CoreReady/PluginsReady 两级协议、旧 Host 兼容、Host 原点导航、私有 Node/pnpm PATH 优先级、两阶段超时、快速进程树清理、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖 9 个 bundle 的固定顺序、连续 prepare 的字节与 mtime 幂等、用户安装优先、禁用保持、Skill 管理、事务提交/回滚和真实 Windows junction。runtime-services 的 Node 测试验证核心服务同时可用后只输出一次 CoreReady。
 
 Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 
@@ -44,4 +47,6 @@ Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
 
 脚本失败兜底只终止本次记录的桌面 PID 与 Host PID，禁止扫描或批量终止其他 `node.exe`。
 
-发布验证先用 fake Host 检查可注入 supervisor 和侧栏设置 API，再安装 NSIS 包并用内置 Node/DSH/插件重跑同一套生命周期检查。卸载检查验证本应用安装目录被移除，且不触碰 DSH 用户会话、profile、插件 marker 与配置。
+`startup-scenarios.ps1` 额外覆盖核心先就绪且插件延迟、CoreReady 后崩溃、插件永不完成三种恢复路径。`benchmark-startup.ps1` 对正式安装版执行 20 次热启动并校验 P95 不超过 8 秒，清理当前 digest 后执行 3 次冷启动并校验每次不超过 20 秒。
+
+发布验证先用 fake Host 检查可注入 supervisor 和侧栏设置 API，再安装 NSIS 包并用内置 Node/DSH/插件重跑同一套生命周期检查。安装器冒烟还验证 digest 插件 store 已预置、首次启动不复制完整插件树，且卸载后缓存和用户 profile 均保留。

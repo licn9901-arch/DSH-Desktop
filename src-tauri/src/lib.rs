@@ -23,7 +23,7 @@ use lifecycle::{HostCommand, HostController, HostEvent, LifecycleAction, Lifecyc
 use logger::{log_app, log_error, log_file_path, log_host};
 use navigation::{decide_navigation, decide_new_window, NavigationDecision};
 use plugins::{PluginManager, PluginTransaction};
-use readiness::ReadinessParser;
+use readiness::{ReadinessParser, ReadinessSignal};
 use runtime::RuntimePaths;
 use tauri::{
     webview::NewWindowResponse, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
@@ -68,6 +68,16 @@ pub fn run() {
 
 /// 创建启动页、启动唯一 Host，并注册读取与监视线程。
 fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Error>> {
+    let boot_started = Instant::now();
+    let boot_id = format!(
+        "{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis()
+    );
+    log_boot_phase(&boot_id, "managed", "boot_start", Duration::ZERO);
     let handle = app.handle().clone();
     let window_title = format!("DeepSeek Harness Desktop · v{}", app.package_info().version);
     app.manage(desktop::DesktopLifecycle::default());
@@ -122,6 +132,7 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     create_tray(app)?;
 
     let resource_dir = app.path().resource_dir().unwrap_or_default();
+    let runtime_started = Instant::now();
     let runtime = match RuntimePaths::resolve(&resource_dir) {
         Ok(runtime) => runtime,
         Err(message) => {
@@ -129,7 +140,14 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             return Ok(());
         }
     };
+    log_boot_phase(
+        &boot_id,
+        "managed",
+        "runtime_resolved",
+        runtime_started.elapsed(),
+    );
     let mut plugin_degraded_reason = None;
+    let plugin_started = Instant::now();
     let mut plugin_transaction = match PluginManager::new(&runtime).prepare() {
         Ok(transaction) => Some(transaction),
         Err(message) => {
@@ -140,8 +158,15 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             None
         }
     };
+    log_boot_phase(
+        &boot_id,
+        "managed",
+        "plugins_prepared",
+        plugin_started.elapsed(),
+    );
 
     app.manage(HostSupervisor::new());
+    let spawn_started = Instant::now();
     let receiver = match start_host_streams(&handle, &runtime) {
         Ok(receiver) => receiver,
         Err(plugin_error) if plugin_transaction.is_some() => {
@@ -178,15 +203,27 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
             return Ok(());
         }
     };
-    spawn_boot_coordinator(
+    log_boot_phase(
+        &boot_id,
+        if plugin_transaction.is_some() {
+            "managed"
+        } else {
+            "core"
+        },
+        "host_spawn",
+        spawn_started.elapsed(),
+    );
+    spawn_boot_coordinator(BootCoordinatorInputs {
         handle,
-        receiver,
+        initial_receiver: receiver,
         runtime,
         host_origin,
         plugin_transaction,
         plugin_degraded_reason,
         host_commands,
-    );
+        boot_id,
+        boot_started,
+    });
     Ok(())
 }
 
@@ -214,7 +251,7 @@ fn repair_skin_patch_before_core_retry(runtime: &RuntimePaths) -> Result<(), Str
         .map(|_| ())
 }
 
-/// 持续排空 Host stdout，并把第一条就绪地址发送给启动协调线程。
+/// 持续排空 Host stdout，并把两级就绪事件发送给启动协调线程。
 fn spawn_stdout_reader(stdout: std::process::ChildStdout, sender: mpsc::Sender<HostEvent>) {
     std::thread::spawn(move || {
         let mut parser = ReadinessParser::new();
@@ -224,8 +261,15 @@ fn spawn_stdout_reader(stdout: std::process::ChildStdout, sender: mpsc::Sender<H
             };
             log_host(&line);
             match parser.parse_line(&line) {
-                Ok(Some(url)) => {
-                    let _ = sender.send(HostEvent::Ready(url));
+                Ok(Some(ReadinessSignal::CoreReady(url))) => {
+                    let _ = sender.send(HostEvent::CoreReady(url));
+                }
+                Ok(Some(ReadinessSignal::PluginsReady(url))) => {
+                    let _ = sender.send(HostEvent::PluginsReady(url));
+                }
+                Ok(Some(ReadinessSignal::LegacyReady(url))) => {
+                    let _ = sender.send(HostEvent::CoreReady(url.clone()));
+                    let _ = sender.send(HostEvent::PluginsReady(url));
                 }
                 Ok(None) => {}
                 Err(error) => {
@@ -234,7 +278,7 @@ fn spawn_stdout_reader(stdout: std::process::ChildStdout, sender: mpsc::Sender<H
                 }
             }
         }
-        if !parser.is_ready() {
+        if !parser.is_core_ready() {
             let _ = sender.send(HostEvent::Exited(None));
         }
     });
@@ -264,23 +308,38 @@ fn spawn_exit_watcher(handle: AppHandle, sender: mpsc::Sender<HostEvent>, expect
     });
 }
 
-/// 等待 Host 首次就绪、导航主窗口，并持续处理后续异常退出。
-fn spawn_boot_coordinator(
+/// 启动协调线程所需的完整上下文，避免参数位置错误并保持单一所有权转移。
+struct BootCoordinatorInputs {
     handle: AppHandle,
     initial_receiver: mpsc::Receiver<HostEvent>,
     runtime: RuntimePaths,
     host_origin: Arc<RwLock<Option<url::Url>>>,
-    mut plugin_transaction: Option<PluginTransaction>,
-    mut plugin_degraded_reason: Option<String>,
+    plugin_transaction: Option<PluginTransaction>,
+    plugin_degraded_reason: Option<String>,
     host_commands: mpsc::Receiver<HostCommand>,
-) {
+    boot_id: String,
+    boot_started: Instant,
+}
+
+/// 等待 Host 首次就绪、导航主窗口，并持续处理后续异常退出。
+fn spawn_boot_coordinator(inputs: BootCoordinatorInputs) {
+    let BootCoordinatorInputs {
+        handle,
+        initial_receiver,
+        runtime,
+        host_origin,
+        mut plugin_transaction,
+        mut plugin_degraded_reason,
+        host_commands,
+        boot_id,
+        boot_started,
+    } = inputs;
     std::thread::spawn(move || {
-        let boot_started = Instant::now();
         let mut receiver = initial_receiver;
         let (mut lifecycle, mut ready_url) = match await_host_ready(
             &handle,
             &receiver,
-            runtime.readiness_timeout,
+            runtime.core_ready_timeout,
         ) {
             Ok(ready) => ready,
             Err(plugin_error) if plugin_transaction.is_some() => {
@@ -288,7 +347,8 @@ fn spawn_boot_coordinator(
                     "managed plugin startup failed; restoring profile and retrying core once: {plugin_error}"
                 ));
                 plugin_degraded_reason = Some(plugin_error.clone());
-                handle.state::<HostSupervisor>().shutdown();
+                let rollback_started = Instant::now();
+                handle.state::<HostSupervisor>().shutdown_for_recovery();
                 if let Some(transaction) = plugin_transaction.take() {
                     if let Err(rollback) = transaction.rollback() {
                         fail(
@@ -298,6 +358,7 @@ fn spawn_boot_coordinator(
                         return;
                     }
                 }
+                log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
                 if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
                     fail(
                         &handle,
@@ -312,7 +373,7 @@ fn spawn_boot_coordinator(
                         return;
                     }
                 };
-                match await_host_ready(&handle, &receiver, runtime.readiness_timeout) {
+                match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
                     Ok(ready) => ready,
                     Err(core_error) => {
                         fail(&handle, &core_error);
@@ -323,6 +384,85 @@ fn spawn_boot_coordinator(
             Err(message) => {
                 fail(&handle, &message);
                 return;
+            }
+        };
+
+        log_boot_phase(&boot_id, "managed", "core_ready", boot_started.elapsed());
+        if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
+            fail(&handle, &message);
+            return;
+        }
+        handle.state::<HostController>().mark_ready();
+
+        let mut plugins_ready = match await_plugins_ready(
+            &handle,
+            &receiver,
+            &mut lifecycle,
+            runtime.plugin_ready_timeout,
+        ) {
+            Ok(()) => true,
+            Err(plugin_error) if plugin_transaction.is_some() => {
+                log_error(&format!(
+                    "managed plugins failed after core readiness; restoring profile and retrying core once: {plugin_error}"
+                ));
+                plugin_degraded_reason = Some(plugin_error.clone());
+                let _ = navigate_to_recovery(&handle, &host_origin);
+                let rollback_started = Instant::now();
+                handle.state::<HostSupervisor>().shutdown_for_recovery();
+                if let Some(transaction) = plugin_transaction.take() {
+                    if let Err(rollback) = transaction.rollback() {
+                        fail(
+                            &handle,
+                            &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                        );
+                        return;
+                    }
+                }
+                log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
+                if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
+                    fail(
+                        &handle,
+                        &format!("{plugin_error}; skin patch repair failed: {repair}"),
+                    );
+                    return;
+                }
+                receiver = match start_host_streams(&handle, &runtime) {
+                    Ok(receiver) => receiver,
+                    Err(core_error) => {
+                        fail(&handle, &core_error);
+                        return;
+                    }
+                };
+                (lifecycle, ready_url) =
+                    match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
+                        Ok(ready) => ready,
+                        Err(core_error) => {
+                            fail(&handle, &core_error);
+                            return;
+                        }
+                    };
+                log_boot_phase(&boot_id, "core", "core_ready", boot_started.elapsed());
+                if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
+                    fail(&handle, &message);
+                    return;
+                }
+                handle.state::<HostController>().mark_ready();
+                match await_plugins_ready(
+                    &handle,
+                    &receiver,
+                    &mut lifecycle,
+                    runtime.plugin_ready_timeout,
+                ) {
+                    Ok(()) => true,
+                    Err(degraded) => {
+                        plugin_degraded_reason = Some(degraded);
+                        false
+                    }
+                }
+            }
+            Err(plugin_error) => {
+                plugin_degraded_reason = Some(plugin_error);
+                false
             }
         };
 
@@ -345,7 +485,8 @@ fn spawn_boot_coordinator(
                         "Better Sidebar security initialization failed; retrying core without managed plugins: {plugin_error}"
                     ));
                     plugin_degraded_reason = Some(plugin_error.clone());
-                    handle.state::<HostSupervisor>().shutdown();
+                    let _ = navigate_to_recovery(&handle, &host_origin);
+                    handle.state::<HostSupervisor>().shutdown_for_recovery();
                     if let Some(transaction) = plugin_transaction.take() {
                         if let Err(rollback) = transaction.rollback() {
                             fail(
@@ -370,25 +511,44 @@ fn spawn_boot_coordinator(
                         }
                     };
                     (lifecycle, ready_url) =
-                        match await_host_ready(&handle, &receiver, runtime.readiness_timeout) {
+                        match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
                             Ok(ready) => ready,
                             Err(core_error) => {
                                 fail(&handle, &core_error);
                                 return;
                             }
                         };
+                    if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
+                        fail(&handle, &message);
+                        return;
+                    }
+                    handle.state::<HostController>().mark_ready();
+                    plugins_ready = await_plugins_ready(
+                        &handle,
+                        &receiver,
+                        &mut lifecycle,
+                        runtime.plugin_ready_timeout,
+                    )
+                    .is_ok();
                 }
             }
         }
 
-        if let Some(transaction) = plugin_transaction.take() {
-            if let Err(message) = transaction.commit() {
-                handle.state::<HostSupervisor>().shutdown();
-                fail(
-                    &handle,
-                    &format!("failed to commit managed plugins: {message}"),
-                );
-                return;
+        if plugins_ready {
+            log_boot_phase(&boot_id, "managed", "plugins_ready", boot_started.elapsed());
+        } else {
+            log_boot_phase(&boot_id, "core", "plugins_degraded", boot_started.elapsed());
+        }
+        if plugins_ready {
+            if let Some(transaction) = plugin_transaction.take() {
+                if let Err(message) = transaction.commit() {
+                    handle.state::<HostSupervisor>().shutdown_for_recovery();
+                    fail(
+                        &handle,
+                        &format!("failed to commit managed plugins: {message}"),
+                    );
+                    return;
+                }
             }
         }
 
@@ -396,11 +556,6 @@ fn spawn_boot_coordinator(
             "host ready: {ready_url} (started in {} ms)",
             boot_started.elapsed().as_millis()
         ));
-        if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
-            fail(&handle, &message);
-            return;
-        }
-        handle.state::<HostController>().mark_ready();
         if let Some(reason) = plugin_degraded_reason {
             let _ = handle
                 .dialog()
@@ -458,7 +613,12 @@ fn spawn_boot_coordinator(
                     fail(&handle, &message);
                     return;
                 }
-                LifecycleAction::Ignore | LifecycleAction::Navigate(_) => {}
+                LifecycleAction::Ignore
+                | LifecycleAction::Navigate(_)
+                | LifecycleAction::PluginsReady => {}
+                LifecycleAction::PluginDegraded { message } => {
+                    log_error(&format!("runtime plugin degradation: {message}"));
+                }
             }
         }
     });
@@ -476,13 +636,39 @@ fn restart_host(
     repair_skin_patch_before_core_retry(runtime)?;
 
     let receiver = start_host_streams(handle, runtime)?;
-    let (lifecycle, ready_url) = await_host_ready(handle, &receiver, runtime.readiness_timeout)?;
+    let (mut lifecycle, ready_url) =
+        await_host_ready(handle, &receiver, runtime.core_ready_timeout)?;
     navigate_to_host(handle, host_origin, &ready_url)?;
+    await_plugins_ready(
+        handle,
+        &receiver,
+        &mut lifecycle,
+        runtime.plugin_ready_timeout,
+    )?;
     log_app(&format!(
         "host restart ready: pid={:?}, url={ready_url}",
         handle.state::<HostSupervisor>().pid()
     ));
     Ok((receiver, lifecycle))
+}
+
+/// 将 WebView 切回内置恢复页，避免回滚时继续停留在即将失效的 Host 端口。
+fn navigate_to_recovery(
+    handle: &AppHandle,
+    host_origin: &Arc<RwLock<Option<url::Url>>>,
+) -> Result<(), String> {
+    *host_origin
+        .write()
+        .unwrap_or_else(|error| error.into_inner()) = None;
+    let recovery = "http://tauri.localhost/index.html"
+        .parse::<url::Url>()
+        .map_err(|error| format!("invalid recovery URL: {error}"))?;
+    if let Some(window) = handle.get_webview_window("main") {
+        window
+            .navigate(recovery)
+            .map_err(|error| format!("failed to navigate WebView to recovery page: {error}"))?;
+    }
+    Ok(())
 }
 
 /// 更新允许导航的 Host 原点，并将主窗口切换到新实例的实际地址。
@@ -539,7 +725,58 @@ fn await_host_ready(
         LifecycleAction::Navigate(url) => Ok((lifecycle, url)),
         LifecycleAction::Fail { message, .. } => Err(message),
         LifecycleAction::Ignore => Err("host startup was cancelled".to_owned()),
+        LifecycleAction::PluginsReady => {
+            Err("host reported plugins before core readiness".to_owned())
+        }
+        LifecycleAction::PluginDegraded { message } => Err(message),
     }
+}
+
+/// 在核心页面已可用后等待全部 Loader 插件完成，超时仅返回可降级错误。
+fn await_plugins_ready(
+    handle: &AppHandle,
+    receiver: &mpsc::Receiver<HostEvent>,
+    lifecycle: &mut LifecycleStateMachine,
+    plugin_timeout: Duration,
+) -> Result<(), String> {
+    let deadline = Instant::now() + plugin_timeout;
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        if remaining.is_zero() {
+            return match lifecycle.on_plugins_timeout(
+                handle.state::<desktop::DesktopLifecycle>().is_quitting(),
+                plugin_timeout.as_secs(),
+            ) {
+                LifecycleAction::PluginDegraded { message } => Err(message),
+                _ => Err("host plugin readiness wait was cancelled".to_owned()),
+            };
+        }
+        let event = match receiver.recv_timeout(remaining) {
+            Ok(event) => event,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                return Err("host event channel disconnected before plugins were ready".to_owned())
+            }
+        };
+        match lifecycle.on_event(
+            event,
+            handle.state::<desktop::DesktopLifecycle>().is_quitting(),
+        ) {
+            LifecycleAction::PluginsReady => return Ok(()),
+            LifecycleAction::Fail { message, .. } | LifecycleAction::PluginDegraded { message } => {
+                return Err(message)
+            }
+            LifecycleAction::Ignore | LifecycleAction::Navigate(_) => {}
+        }
+    }
+}
+
+/// 记录稳定 key-value 启动阶段，供单次启动追踪和 P95 基准脚本聚合。
+fn log_boot_phase(boot_id: &str, attempt: &str, phase: &str, duration: Duration) {
+    log_app(&format!(
+        "boot_id={boot_id} phase={phase} duration_ms={} attempt={attempt}",
+        duration.as_millis()
+    ));
 }
 
 /// 记录启动错误、显示诊断提示并以失败状态退出应用。

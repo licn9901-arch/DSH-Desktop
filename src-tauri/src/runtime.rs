@@ -4,7 +4,8 @@ use std::env;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-const DEFAULT_READINESS_TIMEOUT: Duration = Duration::from_secs(90);
+const DEFAULT_CORE_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const CLI_RELATIVE_PATH: &str = "node_modules/@deepseek-ai/dsh/lib/bin.js";
 
 /// 启动 Host 所需的全部已解析路径与超时配置。
@@ -21,7 +22,8 @@ pub struct RuntimePaths {
     pub web_profile: PathBuf,
     pub managed_plugins_root: PathBuf,
     pub working_directory: PathBuf,
-    pub readiness_timeout: Duration,
+    pub core_ready_timeout: Duration,
+    pub plugin_ready_timeout: Duration,
 }
 
 impl RuntimePaths {
@@ -42,6 +44,8 @@ struct RuntimeInputs {
     home: Option<String>,
     dsh_home: Option<String>,
     readiness_timeout: Option<String>,
+    core_ready_timeout: Option<String>,
+    plugin_ready_timeout: Option<String>,
     path_directories: Vec<PathBuf>,
 }
 
@@ -57,6 +61,8 @@ impl RuntimeInputs {
             home: non_empty_env("HOME"),
             dsh_home: non_empty_env("DSH_HOME"),
             readiness_timeout: non_empty_env("DSH_DESKTOP_READY_TIMEOUT_SECS"),
+            core_ready_timeout: non_empty_env("DSH_DESKTOP_CORE_READY_TIMEOUT_SECS"),
+            plugin_ready_timeout: non_empty_env("DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS"),
             path_directories: env::var_os("PATH")
                 .map(|path| env::split_paths(&path).collect())
                 .unwrap_or_default(),
@@ -84,7 +90,8 @@ impl RuntimeInputs {
             managed_plugins_root: dsh_home.join("profiles/node_modules/.dsh-desktop"),
             dsh_home,
             working_directory: self.resolve_working_directory(),
-            readiness_timeout: self.resolve_readiness_timeout(),
+            core_ready_timeout: self.resolve_core_ready_timeout(),
+            plugin_ready_timeout: self.resolve_plugin_ready_timeout(),
         })
     }
 
@@ -205,13 +212,18 @@ impl RuntimeInputs {
             .unwrap_or_else(|| PathBuf::from(".dsh"))
     }
 
-    /// 解析启动超时；无效或空值回退到 90 秒。
-    fn resolve_readiness_timeout(&self) -> Duration {
-        self.readiness_timeout
-            .as_ref()
-            .and_then(|value| value.trim().parse::<u64>().ok())
-            .map(Duration::from_secs)
-            .unwrap_or(DEFAULT_READINESS_TIMEOUT)
+    /// 解析核心就绪超时；旧变量作为兼容回退，默认 15 秒。
+    fn resolve_core_ready_timeout(&self) -> Duration {
+        parse_timeout(self.core_ready_timeout.as_ref())
+            .or_else(|| parse_timeout(self.readiness_timeout.as_ref()))
+            .unwrap_or(DEFAULT_CORE_READY_TIMEOUT)
+    }
+
+    /// 解析插件就绪超时；旧变量作为兼容回退，默认 30 秒。
+    fn resolve_plugin_ready_timeout(&self) -> Duration {
+        parse_timeout(self.plugin_ready_timeout.as_ref())
+            .or_else(|| parse_timeout(self.readiness_timeout.as_ref()))
+            .unwrap_or(DEFAULT_PLUGIN_READY_TIMEOUT)
     }
 
     /// 在已注入的 PATH 目录中查找指定可执行文件。
@@ -246,13 +258,23 @@ fn non_empty_env(name: &str) -> Option<String> {
         .filter(|value| !value.is_empty())
 }
 
+/// 将正整数秒转换为 Duration，零值和非法输入均视为未配置。
+fn parse_timeout(value: Option<&String>) -> Option<Duration> {
+    value
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .filter(|seconds| *seconds > 0)
+        .map(Duration::from_secs)
+}
+
 #[cfg(test)]
 mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
-    use super::{RuntimeInputs, CLI_RELATIVE_PATH, DEFAULT_READINESS_TIMEOUT};
+    use super::{
+        RuntimeInputs, CLI_RELATIVE_PATH, DEFAULT_CORE_READY_TIMEOUT, DEFAULT_PLUGIN_READY_TIMEOUT,
+    };
 
     struct TestDirectory(PathBuf);
 
@@ -306,7 +328,8 @@ mod tests {
         assert_eq!(resolved.node, bundled_node);
         assert_eq!(resolved.cli_entry, bundled_cli);
         assert_eq!(resolved.working_directory, resources.path());
-        assert_eq!(resolved.readiness_timeout, DEFAULT_READINESS_TIMEOUT);
+        assert_eq!(resolved.core_ready_timeout, DEFAULT_CORE_READY_TIMEOUT);
+        assert_eq!(resolved.plugin_ready_timeout, DEFAULT_PLUGIN_READY_TIMEOUT);
     }
 
     #[test]
@@ -320,13 +343,29 @@ mod tests {
             working_directory: Some(resources.path().display().to_string()),
             user_home_override: Some(resources.path().join("user").display().to_string()),
             readiness_timeout: Some("12".to_owned()),
+            core_ready_timeout: Some("7".to_owned()),
+            plugin_ready_timeout: Some("19".to_owned()),
             ..Default::default()
         };
         let resolved = inputs.resolve(resources.path(), true).unwrap();
         assert_eq!(resolved.node, node);
         assert_eq!(resolved.cli_entry, cli);
         assert_eq!(resolved.user_home, resources.path().join("user"));
-        assert_eq!(resolved.readiness_timeout, Duration::from_secs(12));
+        assert_eq!(resolved.core_ready_timeout, Duration::from_secs(7));
+        assert_eq!(resolved.plugin_ready_timeout, Duration::from_secs(19));
+    }
+
+    #[test]
+    fn legacy_timeout_is_the_compatibility_fallback_for_both_stages() {
+        let inputs = RuntimeInputs {
+            readiness_timeout: Some("12".to_owned()),
+            ..Default::default()
+        };
+        assert_eq!(inputs.resolve_core_ready_timeout(), Duration::from_secs(12));
+        assert_eq!(
+            inputs.resolve_plugin_ready_timeout(),
+            Duration::from_secs(12)
+        );
     }
 
     #[test]
@@ -345,8 +384,8 @@ mod tests {
             ..Default::default()
         };
         assert_eq!(
-            timeout_inputs.resolve_readiness_timeout(),
-            DEFAULT_READINESS_TIMEOUT
+            timeout_inputs.resolve_core_ready_timeout(),
+            DEFAULT_CORE_READY_TIMEOUT
         );
     }
 

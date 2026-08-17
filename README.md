@@ -98,8 +98,10 @@ flowchart LR
 node --expose-internals <bundled-dsh>/lib/bin.js web --patch <desktop-policy> --host 127.0.0.1 --port 0
 ```
 
-就绪解析只接受以 `dsh web: ` 开头、主机为 `127.0.0.1` 或 `localhost`、带合法显式端口、
-且没有凭据、路径、查询参数或片段的 HTTP 地址。冲突的重复地址会终止启动。
+桌面适配器在核心 `webServer` 与 `webRuntime` 可用后输出 `dsh desktop-core: `，桌面壳立即
+导航；全部 Loader 插件完成后，上游继续输出 `dsh web: ` 并提交插件事务。旧 Host 只输出
+`dsh web: ` 时同时视为两级就绪。两个信号都只接受回环主机、合法显式端口且不带凭据、
+路径、查询参数或片段的 HTTP 地址；冲突地址会终止启动。
 
 ## 与上游项目的关系
 
@@ -126,7 +128,9 @@ npm ci
 | `DSH_DESKTOP_CLI_ENTRY` | 仅开发模式：指定 DSH `lib/bin.js` |
 | `DSH_DESKTOP_CWD` | 指定 Host 工作目录，默认用户目录 |
 | `DSH_DESKTOP_USER_HOME` | 仅开发模式：覆盖第三方用户配置目录，供隔离 smoke 使用 |
-| `DSH_DESKTOP_READY_TIMEOUT_SECS` | 指定 Host 就绪超时秒数，默认 90 |
+| `DSH_DESKTOP_CORE_READY_TIMEOUT_SECS` | 核心页面就绪超时秒数，默认 15 |
+| `DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS` | 全部插件完成超时秒数，默认 30 |
+| `DSH_DESKTOP_READY_TIMEOUT_SECS` | 兼容旧配置，同时作为上述两个超时的回退值 |
 
 ### 构建自包含安装包
 
@@ -142,6 +146,9 @@ integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管
 才调用 Tauri 打包。
 暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
 `src-tauri/target/release/bundle/nsis`。
+
+Node Host 与内置插件预编译、依赖裁剪、单一 pnpm 10、ZIP payload 和快速 NSIS 的后续改造见
+[桌面运行时与安装包优化方案](docs/runtime-packaging-optimization.md)。
 
 已有缓存时可离线暂存：
 
@@ -165,6 +172,8 @@ npm audit --omit=dev
 Pop-Location
 npm run coverage
 npm run smoke
+npm run smoke:startup
+# 正式安装版基准：npm run benchmark:startup -- -Exe '<安装目录>\dsh-desktop.exe'
 ```
 
 覆盖率门禁为 Host、运行时、生命周期、导航、日志和就绪解析核心模块行覆盖率不低于 80%；应用装配层由 Windows 冒烟覆盖。详细范围与流程见

@@ -262,8 +262,20 @@ impl PluginManager {
         let state = read_json_or_default::<PluginInstallState>(&state_path)?;
         let profile_path = self.web_profile.join("package.json");
         let profile = read_profile(&profile_path)?;
+        if self.fast_path_matches(&profile, &state, &lock, &store_modules, &digest)? {
+            return Ok(PluginTransaction {
+                should_seed_sidebar: false,
+                state_path,
+                next_state: state,
+                snapshots: Vec::new(),
+                link_changes: Vec::new(),
+                linker: self.linker.clone(),
+                finalized: false,
+            });
+        }
         let plan = plan_profile(profile.clone(), &state, &lock, &store_modules, &digest)?;
-        if plan.profile != profile && profile_path.is_file() {
+        let profile_changed = plan.profile != profile;
+        if profile_changed && profile_path.is_file() {
             persist_profile_backup(&self.dsh_home, &profile_path)?;
         }
         let expected_profile_bytes = read_optional_bytes(&profile_path)?;
@@ -353,16 +365,18 @@ impl PluginManager {
                 });
             }
 
-            if read_optional_bytes(&profile_path)? != expected_profile_bytes {
-                return Err(format!(
-                    "profile changed concurrently while plugins were being prepared: {}",
-                    profile_path.display()
-                ));
+            if profile_changed {
+                if read_optional_bytes(&profile_path)? != expected_profile_bytes {
+                    return Err(format!(
+                        "profile changed concurrently while plugins were being prepared: {}",
+                        profile_path.display()
+                    ));
+                }
+                transaction
+                    .snapshots
+                    .push(FileSnapshot::capture(&profile_path)?);
+                atomic_write_json(&profile_path, &plan.profile)?;
             }
-            transaction
-                .snapshots
-                .push(FileSnapshot::capture(&profile_path)?);
-            atomic_write_json(&profile_path, &plan.profile)?;
 
             for skill in &lock.skills {
                 let source = store_modules
@@ -436,6 +450,98 @@ impl PluginManager {
             });
         }
         Ok(transaction)
+    }
+
+    /// 校验健康 marker、profile、junction 与托管 Skill，命中时跳过重新规划和链接重建。
+    fn fast_path_matches(
+        &self,
+        profile: &Value,
+        state: &PluginInstallState,
+        lock: &PluginLock,
+        store_modules: &Path,
+        digest: &str,
+    ) -> Result<bool, String> {
+        if state.lock_digest != digest
+            || !state.sidebar_defaults_seeded
+            || !self.web_profile.join("pnpm-workspace.yaml").is_file()
+        {
+            return Ok(false);
+        }
+        let Some(dependencies) = profile.get("dependencies").and_then(Value::as_object) else {
+            return Ok(false);
+        };
+        let Some(bundle_values) = profile
+            .pointer("/dsh/profile/bundles")
+            .and_then(Value::as_array)
+        else {
+            return Ok(false);
+        };
+        let bundles = bundle_values
+            .iter()
+            .filter_map(Value::as_str)
+            .collect::<Vec<_>>();
+
+        for (package, version, should_be_bundle) in lock
+            .plugins
+            .iter()
+            .map(|plugin| (plugin.package.as_str(), plugin.version.as_str(), true))
+            .chain(lock.transitive_packages.iter().map(|dependency| {
+                (
+                    dependency.package.as_str(),
+                    dependency.version.as_str(),
+                    false,
+                )
+            }))
+        {
+            let target = store_modules.join(package_relative_path(package)?);
+            let target_text = normalized_path(&target);
+            let expected_dependency = link_spec(&target_text);
+            let Some(record) = state.managed.get(package) else {
+                return Ok(false);
+            };
+            if record.version != version
+                || record.link_target != target_text
+                || dependencies.get(package).and_then(Value::as_str)
+                    != Some(expected_dependency.as_str())
+                || self.linker.target(
+                    &self
+                        .web_profile
+                        .join("node_modules")
+                        .join(package_relative_path(package)?),
+                )? != Some(target)
+                || (should_be_bundle && bundles.contains(&package)) != record.bundle_enabled
+            {
+                return Ok(false);
+            }
+        }
+
+        let runtime_index = bundles
+            .iter()
+            .position(|bundle| *bundle == RUNTIME_SERVICES_BUNDLE);
+        let market_index = bundles.iter().position(|bundle| *bundle == MARKET_BUNDLE);
+        if !matches!(runtime_index.zip(market_index), Some((runtime, market)) if runtime + 1 == market)
+        {
+            return Ok(false);
+        }
+        for skill in &lock.skills {
+            let Some(record) = state.managed_skills.get(&skill.name) else {
+                return Ok(false);
+            };
+            if record.user_removed {
+                continue;
+            }
+            let target = self
+                .dsh_home
+                .join("skills")
+                .join(&skill.name)
+                .join("SKILL.md");
+            if read_optional_bytes(&target)?.as_deref().map(sha256_hex)
+                != Some(record.content_sha256.clone())
+            {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     /// 修复 preview.4 产生的 `[]` 加 Skin 管理块，修复先于插件事务并在 core retry 时保留。
@@ -568,7 +674,7 @@ impl PluginTransaction {
 
     /// Host 和设置初始化成功后持久化桌面 marker。
     pub fn commit(mut self) -> Result<(), String> {
-        atomic_write_json(&self.state_path, &self.next_state)?;
+        atomic_write_json_if_changed(&self.state_path, &self.next_state)?;
         self.finalized = true;
         Ok(())
     }
@@ -760,7 +866,7 @@ fn ensure_plugin_store(
         let source_modules = resources.join("node_modules");
         let staging_modules = staging.join("node_modules");
         copy_physical_tree(&source_modules, &staging_modules)?;
-        validate_physical_tree(&staging_modules)?;
+        // 源树已完整拒绝链接，Windows robocopy 同时使用 /XJ；目标只需按 lock 复核必要文件。
         atomic_write(&staging.join("plugins.lock.json"), lock_bytes)?;
         validate_plugin_tree(&staging_modules, lock)?;
         fs::rename(&staging, store).map_err(|error| {
@@ -820,7 +926,7 @@ fn copy_validated_tree(source: &Path, destination: &Path) -> Result<(), String> 
             "/DCOPY:DAT",
             "/R:1",
             "/W:1",
-            "/MT:16",
+            "/MT:32",
             "/XJ",
             "/SL",
             "/NFL",
@@ -959,6 +1065,18 @@ fn atomic_write_json(path: &Path, value: &impl Serialize) -> Result<(), String> 
         .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
     bytes.push(b'\n');
     atomic_write(path, &bytes)
+}
+
+/// 仅在格式化 JSON 字节变化时执行原子替换，保持健康启动的文件 mtime 稳定。
+fn atomic_write_json_if_changed(path: &Path, value: &impl Serialize) -> Result<bool, String> {
+    let mut bytes = serde_json::to_vec_pretty(value)
+        .map_err(|error| format!("failed to encode {}: {error}", path.display()))?;
+    bytes.push(b'\n');
+    if read_optional_bytes(path)?.as_deref() == Some(bytes.as_slice()) {
+        return Ok(false);
+    }
+    atomic_write(path, &bytes)?;
+    Ok(true)
 }
 
 /// 先写同目录临时文件，再替换目标，防止进程中断留下半个 JSON。
@@ -1425,7 +1543,7 @@ fn insert_builtin_market(profile: &mut Value) -> Result<(), String> {
     Ok(())
 }
 
-/// 将 Market 固定在连续官方 bundle 之后，并移除用户 profile 中的重复激活项。
+/// 将 Market 固定在官方 bundle 和桌面核心服务之后，统一准备阶段的稳定顺序。
 fn insert_market_bundle(bundles: &mut Vec<String>) {
     bundles.retain(|bundle| bundle != MARKET_BUNDLE);
     deduplicate(bundles);
@@ -1433,7 +1551,15 @@ fn insert_market_bundle(bundles: &mut Vec<String>) {
         .iter()
         .take_while(|bundle| bundle.starts_with("@deepseek-ai/"))
         .count();
-    bundles.insert(official_prefix, MARKET_BUNDLE.to_owned());
+    let insertion = if bundles
+        .get(official_prefix)
+        .is_some_and(|bundle| bundle == RUNTIME_SERVICES_BUNDLE)
+    {
+        official_prefix + 1
+    } else {
+        official_prefix
+    };
+    bundles.insert(insertion, MARKET_BUNDLE.to_owned());
 }
 
 /// 校验 npm 包名，避免锁文件内容逃逸出 `node_modules`。
@@ -2368,6 +2494,33 @@ mod tests {
             .path()
             .join("home/.dsh/profiles/web/cordis.patch.yml")
             .exists());
+    }
+
+    #[test]
+    fn repeated_prepare_preserves_profile_and_marker_bytes_and_mtime() {
+        let (root, manager, _linker) = manager_fixture();
+        manager.prepare().unwrap().commit().unwrap();
+        let profile = root.path().join("home/.dsh/profiles/web/package.json");
+        let marker = root
+            .path()
+            .join("home/.dsh/desktop-managed/plugins-state.json");
+        let profile_bytes = fs::read(&profile).unwrap();
+        let marker_bytes = fs::read(&marker).unwrap();
+        let profile_modified = fs::metadata(&profile).unwrap().modified().unwrap();
+        let marker_modified = fs::metadata(&marker).unwrap().modified().unwrap();
+
+        manager.prepare().unwrap().commit().unwrap();
+
+        assert_eq!(fs::read(&profile).unwrap(), profile_bytes);
+        assert_eq!(fs::read(&marker).unwrap(), marker_bytes);
+        assert_eq!(
+            fs::metadata(&profile).unwrap().modified().unwrap(),
+            profile_modified
+        );
+        assert_eq!(
+            fs::metadata(&marker).unwrap().modified().unwrap(),
+            marker_modified
+        );
     }
 
     #[test]

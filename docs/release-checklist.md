@@ -13,8 +13,11 @@
 - [ ] `cargo fmt --check`、Clippy `-D warnings`、`cargo test --locked` 通过。
 - [ ] 核心 Rust 库行覆盖率不低于 80%。
 - [ ] fake Host 冒烟验证就绪、单实例、关闭到托盘和显式退出。
+- [ ] fake Host 启动恢复验证核心先就绪、CoreReady 后崩溃、插件永不完成且最多重试一次。
 - [ ] 隔离的 pnpm 10 profile 通过 Market 完成 `dsh-pet` 安装与卸载，且不触碰真实 `$DSH_HOME`。
 - [ ] 安装器冒烟验证安装、内置运行时启动、生命周期、卸载和无残留进程。
+- [ ] NSIS 已按 digest 预置插件 store，卸载不删除该缓存或用户 profile。
+- [ ] 正式安装版热启动 20 次 CoreReady P95 不超过 8 秒，冷启动 3 次均不超过 20 秒。
 - [ ] 缺少任一内置运行时关键文件时构建失败。
 - [ ] 原始 `dshmarket@1.9.0` 客户端注册 ID 与活动 Cordis entry 一致，不存在桌面改名副本。
 - [ ] `dsh --profile web --dump-config --patch policy/dsh-market.patch.yml` 中 `dsh-market` 处于活动状态，且 `profile=web`、`allowRestart=false`。

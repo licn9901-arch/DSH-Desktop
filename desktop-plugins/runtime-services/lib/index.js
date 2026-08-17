@@ -10,6 +10,7 @@ const GITHUB_HTTPS_REWRITES = [
   "git@github.com:",
 ];
 let activeOperation = null;
+let coreReadyUrl = null;
 
 function requiredAbsolutePath(name) {
   const value = process.env[name];
@@ -211,9 +212,20 @@ function apply(ctx) {
     current: Object.freeze({ name: PROFILE_NAME, dir: profileDirectory }),
   }));
   ctx.provide("desktopPnpm", Object.freeze({ runPlugin }));
+  const host = ctx.webServer?.host;
+  const port = ctx.webServer?.port;
+  if (ctx.webRuntime && (host === "127.0.0.1" || host === "localhost") && Number.isInteger(port)) {
+    const url = `http://${host}:${port}`;
+    if (coreReadyUrl === null) {
+      coreReadyUrl = url;
+      console.log(`dsh desktop-core: ${url}`);
+    } else if (coreReadyUrl !== url) {
+      throw new Error(`desktop core reported conflicting URLs: ${coreReadyUrl} and ${url}`);
+    }
+  }
 }
 
-const inject = [];
+const inject = ["webServer", "webRuntime"];
 
 export {
   apply,

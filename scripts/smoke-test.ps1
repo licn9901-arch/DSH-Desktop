@@ -2,7 +2,11 @@ param(
     [string]$Exe = '..\src-tauri\target\debug\dsh-desktop.exe',
     [int]$TimeoutSeconds = 30,
     [switch]$UseBundledRuntime,
-    [switch]$TestMarket
+    [switch]$TestMarket,
+    [string]$DshHome,
+    [ValidateSet('legacy', 'core-first', 'core-crash', 'plugins-never')]
+    [string]$FakeHostScenario = 'legacy',
+    [int]$FakePluginDelayMs = 500
 )
 
 $ErrorActionPreference = 'Stop'
@@ -36,6 +40,10 @@ $previousEnvironment = @{
     DSH_DESKTOP_CWD = $env:DSH_DESKTOP_CWD
     DSH_DESKTOP_USER_HOME = $env:DSH_DESKTOP_USER_HOME
     DSH_DESKTOP_READY_TIMEOUT_SECS = $env:DSH_DESKTOP_READY_TIMEOUT_SECS
+    DSH_DESKTOP_CORE_READY_TIMEOUT_SECS = $env:DSH_DESKTOP_CORE_READY_TIMEOUT_SECS
+    DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS
+    DSH_DESKTOP_FAKE_HOST_SCENARIO = $env:DSH_DESKTOP_FAKE_HOST_SCENARIO
+    DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS = $env:DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS
 }
 
 $desktopProcess = $null
@@ -110,7 +118,11 @@ try {
     }
 
     # WebView2 依赖真实 Windows 用户目录；只隔离 DSH_HOME，避免伪造用户身份导致初始化阻塞。
-    $env:DSH_HOME = Join-Path $smokeRoot '.dsh'
+    $env:DSH_HOME = if ([string]::IsNullOrWhiteSpace($DshHome)) {
+        Join-Path $smokeRoot '.dsh'
+    } else {
+        [System.IO.Path]::GetFullPath($DshHome)
+    }
     $env:DSH_DESKTOP_LOG_DIR = $logDirectory
     if ($UseBundledRuntime) {
         Remove-Item Env:DSH_DESKTOP_NODE_EXECUTABLE -ErrorAction SilentlyContinue
@@ -123,6 +135,10 @@ try {
     $env:DSH_DESKTOP_CWD = $workingDirectory
     $env:DSH_DESKTOP_USER_HOME = $smokeRoot
     $env:DSH_DESKTOP_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
+    $env:DSH_DESKTOP_CORE_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
+    $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
+    $env:DSH_DESKTOP_FAKE_HOST_SCENARIO = $FakeHostScenario
+    $env:DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS = $FakePluginDelayMs.ToString()
 
     if ($TestMarket) {
         # 模拟由 pnpm 10 创建的已有 profile，防止未来再次把 JSON 元数据误判为新 profile。
@@ -152,7 +168,7 @@ try {
             if ($pidMatch.Success) {
                 $hostProcessId = [int]$pidMatch.Groups[1].Value
             }
-            if ($content -match 'host ready: http://127\.0\.0\.1:\d+') {
+            if ($content -match 'phase=core_ready duration_ms=\d+ attempt=') {
                 $ready = $true
                 break
             }
@@ -167,7 +183,7 @@ try {
     }
 
     if ($TestMarket) {
-        $urlMatch = [regex]::Match($content, 'host ready: (http://127\.0\.0\.1:\d+)')
+        $urlMatch = [regex]::Match($content, 'dsh (?:desktop-core|web): (http://127\.0\.0\.1:\d+)')
         if (-not $urlMatch.Success) {
             throw 'Could not read the ready URL for Market smoke.'
         }

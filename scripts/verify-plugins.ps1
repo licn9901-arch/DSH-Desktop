@@ -19,6 +19,12 @@ if (-not (Test-Path -LiteralPath $resourceLock -PathType Leaf)) {
 if ((Get-FileHash -LiteralPath $trackedLock -Algorithm SHA256).Hash -ne (Get-FileHash -LiteralPath $resourceLock -Algorithm SHA256).Hash) {
     throw 'Staged plugins.lock.json does not match the tracked lock file.'
 }
+$digestPath = Join-Path $resourceRootPath 'store.digest'
+$expectedDigest = (Get-FileHash -LiteralPath $trackedLock -Algorithm SHA256).Hash.ToLowerInvariant().Substring(0, 16)
+if (-not (Test-Path -LiteralPath $digestPath -PathType Leaf) -or
+    (Get-Content -LiteralPath $digestPath -Raw).Trim() -ne $expectedDigest) {
+    throw 'Staged plugin store.digest does not match plugins.lock.json.'
+}
 
 $lock = Get-Content -LiteralPath $resourceLock -Raw | ConvertFrom-Json
 $expectedOrder = @(
@@ -50,7 +56,7 @@ foreach ($marker in @('/api/desktop-managed-plugins', 'PROTECTED_BUNDLES', 'atom
     }
 }
 $runtimeServices = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\runtime-services\lib\index.js') -Raw
-foreach ($marker in @('ctx.provide("desktopProfiles"', 'ctx.provide("desktopPnpm"', 'unsupported profile pnpm major')) {
+foreach ($marker in @('ctx.provide("desktopProfiles"', 'ctx.provide("desktopPnpm"', 'dsh desktop-core:', 'unsupported profile pnpm major')) {
     if (-not $runtimeServices.Contains($marker)) {
         throw "Desktop Runtime Services is missing required marker: $marker"
     }

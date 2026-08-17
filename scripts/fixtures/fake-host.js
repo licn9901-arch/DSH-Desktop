@@ -1,6 +1,8 @@
 const http = require("node:http");
 
 let settingsRevision = 1;
+const scenario = process.env.DSH_DESKTOP_FAKE_HOST_SCENARIO ?? "legacy";
+const pluginDelay = Number(process.env.DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS ?? "500");
 
 const server = http.createServer((request, response) => {
   if (request.method === "POST" && request.url === "/sidebar/api/settings.get") {
@@ -31,7 +33,18 @@ const server = http.createServer((request, response) => {
 
 server.listen(0, "127.0.0.1", () => {
   const address = server.address();
-  process.stdout.write(`dsh web: http://127.0.0.1:${address.port}\n`);
+  const url = `http://127.0.0.1:${address.port}`;
+  if (scenario === "legacy") {
+    process.stdout.write(`dsh web: ${url}\n`);
+    return;
+  }
+  process.stdout.write(`dsh desktop-core: ${url}\n`);
+  if (scenario === "core-crash") {
+    setTimeout(() => process.exit(21), Math.max(50, pluginDelay)).unref();
+    return;
+  }
+  if (scenario === "plugins-never") return;
+  setTimeout(() => process.stdout.write(`dsh web: ${url}\n`), Math.max(0, pluginDelay)).unref();
 });
 
 function shutdown() {

@@ -4,11 +4,37 @@ import { tmpdir } from "node:os";
 import { test } from "node:test";
 import { delimiter, join } from "node:path";
 import {
+  apply,
   packageManagerEnvironment,
   readProfileSnapshot,
   reconcileProfileBundles,
   selectPnpmMajor,
 } from "../lib/index.js";
+
+test("核心服务就绪后只输出一次桌面 CoreReady 协议", () => {
+  const previousProfile = process.env.DSH_DESKTOP_WEB_PROFILE;
+  const messages = [];
+  const originalLog = console.log;
+  process.env.DSH_DESKTOP_WEB_PROFILE = join(tmpdir(), "dsh-runtime-core-ready");
+  console.log = (message) => messages.push(message);
+  try {
+    const provided = new Map();
+    const ctx = {
+      webServer: { host: "127.0.0.1", port: 4321 },
+      webRuntime: {},
+      provide(name, value) { provided.set(name, value); },
+    };
+    apply(ctx);
+    apply(ctx);
+    assert.deepEqual(messages, ["dsh desktop-core: http://127.0.0.1:4321"]);
+    assert.ok(provided.has("desktopProfiles"));
+    assert.ok(provided.has("desktopPnpm"));
+  } finally {
+    console.log = originalLog;
+    if (previousProfile === undefined) delete process.env.DSH_DESKTOP_WEB_PROFILE;
+    else process.env.DSH_DESKTOP_WEB_PROFILE = previousProfile;
+  }
+});
 
 test("从 modules 元数据选择固定 pnpm major", () => {
   assert.equal(selectPnpmMajor("packageManager: pnpm@9.15.9\n"), 9);

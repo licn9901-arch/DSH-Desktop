@@ -2,7 +2,8 @@ param(
     [Parameter(Mandatory = $true)]
     [string]$Installer,
     [string]$InstallRoot,
-    [int]$TimeoutSeconds = 180
+    [int]$TimeoutSeconds = 180,
+    [switch]$SkipMarket
 )
 
 $ErrorActionPreference = 'Stop'
@@ -39,6 +40,7 @@ $bundledRuntimeLicenses = @(
     (Join-Path $installRoot 'host\THIRD_PARTY_NOTICES.md')
 )
 $bundledPluginLock = Join-Path $installRoot 'plugins\plugins.lock.json'
+$bundledPluginDigest = Join-Path $installRoot 'plugins\store.digest'
 $bundledPlugins = @(
     (Join-Path $installRoot 'plugins\node_modules\dsh-at-file\lib\index.js'),
     (Join-Path $installRoot 'plugins\node_modules\@omdsh-dev\dsh-genui\lib\assets\mermaid.js'),
@@ -68,10 +70,14 @@ if ((Test-Path -LiteralPath $installedExe -PathType Leaf) -or
 }
 
 $installed = $false
+$preseedVerified = $false
+$installerDshRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-desktop-installer-smoke-" + [guid]::NewGuid().ToString('N'))
+$previousDshHome = $env:DSH_HOME
 try {
+    $env:DSH_HOME = Join-Path $installerDshRoot '.dsh'
     # 自动化使用 NSIS 静默安装；应用生命周期仍由完整桌面冒烟脚本验证。
     # `/D=` 必须是 NSIS 的最后一个参数；隔离目录可避免 smoke 触碰用户已有安装。
-    $installProcess = Start-Process -FilePath $installerPath -ArgumentList @('/S', "/D=$installRoot") -PassThru -Wait
+    $installProcess = Start-Process -FilePath $installerPath -ArgumentList @('/S', "/DSHHOME=$env:DSH_HOME", "/D=$installRoot") -PassThru -Wait
     $installed = Test-Path -LiteralPath $installRoot -PathType Container
     if ($installProcess.ExitCode -ne 0) {
         throw "Silent installation failed with exit code $($installProcess.ExitCode)."
@@ -92,6 +98,7 @@ try {
             (Test-Path -LiteralPath $bundledMarketPolicy -PathType Leaf) -and
             (($bundledRuntimeLicenses | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledRuntimeLicenses.Count) -and
             (Test-Path -LiteralPath $bundledPluginLock -PathType Leaf) -and
+            (Test-Path -LiteralPath $bundledPluginDigest -PathType Leaf) -and
             (($bundledPlugins | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }).Count -eq $bundledPlugins.Count) -and
             $webReady
         if (-not $installReady) {
@@ -102,11 +109,22 @@ try {
         throw "Installation did not finish writing the bundled runtime within $TimeoutSeconds seconds."
     }
 
-    & (Join-Path $PSScriptRoot 'smoke-test.ps1') `
-        -Exe $installedExe `
-        -TimeoutSeconds $TimeoutSeconds `
-        -UseBundledRuntime `
-        -TestMarket
+    $digest = (Get-Content -LiteralPath $bundledPluginDigest -Raw).Trim()
+    $preseededStore = Join-Path $env:DSH_HOME "profiles\node_modules\.dsh-desktop\$digest"
+    if (-not (Test-Path -LiteralPath (Join-Path $preseededStore 'plugins.lock.json') -PathType Leaf) -or
+        -not (Test-Path -LiteralPath (Join-Path $preseededStore 'node_modules\@dsh-desktop\runtime-services\lib\index.js') -PathType Leaf)) {
+        throw "Installer did not preseed the managed plugin store: $preseededStore"
+    }
+    $preseedVerified = $true
+
+    $smokeArguments = @{
+        Exe = $installedExe
+        TimeoutSeconds = $TimeoutSeconds
+        UseBundledRuntime = $true
+        DshHome = $env:DSH_HOME
+    }
+    if (-not $SkipMarket) { $smokeArguments.TestMarket = $true }
+    & (Join-Path $PSScriptRoot 'smoke-test.ps1') @smokeArguments
 }
 finally {
     if ($installed) {
@@ -124,6 +142,13 @@ finally {
         while ((Test-Path -LiteralPath $installedExe) -and (Get-Date) -lt $uninstallDeadline) {
             Start-Sleep -Milliseconds 250
         }
+    }
+    if ($preseedVerified -and -not (Test-Path -LiteralPath $preseededStore -PathType Container)) {
+        throw 'Uninstaller removed the managed plugin cache that must be preserved.'
+    }
+    [Environment]::SetEnvironmentVariable('DSH_HOME', $previousDshHome, 'Process')
+    if (Test-Path -LiteralPath $installerDshRoot -PathType Container) {
+        Remove-Item -LiteralPath $installerDshRoot -Recurse -Force
     }
 }
 

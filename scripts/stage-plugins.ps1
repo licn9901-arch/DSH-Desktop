@@ -90,6 +90,8 @@ if (Test-Path -LiteralPath $resourceRoot) {
 }
 New-Item -ItemType Directory -Force -Path $resourceRoot | Out-Null
 Copy-Item -LiteralPath $lockPath -Destination (Join-Path $resourceRoot 'plugins.lock.json')
+$storeDigest = (Get-FileHash -LiteralPath $lockPath -Algorithm SHA256).Hash.ToLowerInvariant().Substring(0, 16)
+$storeDigest | Set-Content -LiteralPath (Join-Path $resourceRoot 'store.digest') -Encoding ascii -NoNewline
 Copy-Item -LiteralPath (Join-Path $runtimeRoot 'package.json') -Destination $resourceRoot
 Copy-Item -LiteralPath (Join-Path $runtimeRoot 'package-lock.json') -Destination $resourceRoot
 
