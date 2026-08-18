@@ -2,9 +2,11 @@
 
 pub mod desktop;
 pub mod host;
+pub mod internal_command;
 pub mod lifecycle;
 pub mod logger;
 pub mod navigation;
+pub mod payload;
 pub mod plugins;
 pub mod readiness;
 pub mod runtime;
@@ -15,16 +17,24 @@ use std::sync::mpsc;
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+const CANDIDATE_CORE_READY_TIMEOUT: Duration = Duration::from_secs(180);
+const CANDIDATE_PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(60);
+
 use desktop::{
     configure_close_to_tray, create_tray, open_external_url, quit_application, show_main_window,
 };
 use host::HostSupervisor;
 use lifecycle::{HostCommand, HostController, HostEvent, LifecycleAction, LifecycleStateMachine};
 use logger::{log_app, log_error, log_file_path, log_host};
-use navigation::{decide_navigation, decide_new_window, NavigationDecision};
+use navigation::{
+    decide_navigation, decide_new_window, safe_target_description, NavigationDecision,
+};
+use payload::{
+    promote_candidate, read_runtime_state, reject_candidate, rollback_candidate_promotion,
+};
 use plugins::{PluginManager, PluginTransaction};
 use readiness::{ReadinessParser, ReadinessSignal};
-use runtime::RuntimePaths;
+use runtime::{test_webview_data_directory, RuntimePaths};
 use tauri::{
     webview::NewWindowResponse, AppHandle, Manager, RunEvent, WebviewUrl, WebviewWindowBuilder,
 };
@@ -86,122 +96,249 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     let host_origin = Arc::new(RwLock::new(None::<url::Url>));
     let navigation_origin = host_origin.clone();
     let new_window_origin = host_origin.clone();
-    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
-        .title(window_title)
-        .inner_size(1280.0, 800.0)
-        .min_inner_size(960.0, 600.0)
-        .on_navigation(move |target| {
-            let origin = navigation_origin
-                .read()
-                .unwrap_or_else(|error| error.into_inner());
-            match decide_navigation(origin.as_ref(), target) {
-                NavigationDecision::Allow => true,
-                NavigationDecision::OpenExternal => {
-                    open_external_url(target);
-                    false
-                }
-                NavigationDecision::Deny => {
-                    log_error(&format!(
-                        "blocked WebView navigation: scheme={}",
-                        target.scheme()
-                    ));
-                    false
-                }
-            }
-        })
-        .on_new_window(move |target, _features| {
-            let origin = new_window_origin
-                .read()
-                .unwrap_or_else(|error| error.into_inner());
-            match decide_new_window(origin.as_ref(), &target) {
-                NavigationDecision::OpenExternal => {
-                    open_external_url(&target);
-                    NewWindowResponse::Deny
-                }
-                NavigationDecision::Allow | NavigationDecision::Deny => {
-                    log_error(&format!(
-                        "blocked WebView new-window request: scheme={}",
-                        target.scheme()
-                    ));
-                    NewWindowResponse::Deny
-                }
-            }
-        })
-        .build()?;
-    configure_close_to_tray(&window);
-    create_tray(app)?;
-
     let resource_dir = app.path().resource_dir().unwrap_or_default();
     let runtime_started = Instant::now();
-    let runtime = match RuntimePaths::resolve(&resource_dir) {
-        Ok(runtime) => runtime,
-        Err(message) => {
-            fail(&handle, &message);
-            return Ok(());
-        }
-    };
+    let selection = RuntimePaths::resolve_startup(&resource_dir);
     log_boot_phase(
         &boot_id,
         "managed",
         "runtime_resolved",
         runtime_started.elapsed(),
     );
-    let mut plugin_degraded_reason = None;
-    let plugin_started = Instant::now();
-    let mut plugin_transaction = match PluginManager::new(&runtime).prepare() {
-        Ok(transaction) => Some(transaction),
-        Err(message) => {
-            log_error(&format!(
-                "managed plugins were disabled before host startup: {message}"
-            ));
-            plugin_degraded_reason = Some(message);
-            None
+    // 普通 active runtime 的插件校验与 WebView2 初始化互不依赖，可并行执行以缩短启动关键路径。
+    let mut background_plugin_prepare = selection.as_ref().ok().and_then(|selection| {
+        (!selection
+            .primary
+            .activation
+            .as_ref()
+            .is_some_and(|activation| activation.candidate))
+        .then(|| {
+            let manager = PluginManager::new(&selection.primary);
+            std::thread::spawn(move || {
+                let started = Instant::now();
+                (manager.prepare(), started.elapsed())
+            })
+        })
+    });
+    let mut window_builder =
+        WebviewWindowBuilder::new(app, "main", WebviewUrl::App("index.html".into()))
+            .title(window_title)
+            .inner_size(1280.0, 800.0)
+            .min_inner_size(960.0, 600.0)
+            .on_navigation(move |target| {
+                let origin = navigation_origin
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner());
+                match decide_navigation(origin.as_ref(), target) {
+                    NavigationDecision::Allow => {
+                        log_app(&format!(
+                            "webview_navigation decision=allow {}",
+                            safe_target_description(target)
+                        ));
+                        true
+                    }
+                    NavigationDecision::OpenExternal => {
+                        log_app(&format!(
+                            "webview_navigation decision=external_browser {}",
+                            safe_target_description(target)
+                        ));
+                        if let Err(error) = open_external_url(target) {
+                            log_error(&format!(
+                                "external browser navigation failed: {error}; {}",
+                                safe_target_description(target)
+                            ));
+                        }
+                        false
+                    }
+                    NavigationDecision::Deny => {
+                        log_error(&format!(
+                            "webview_navigation decision=deny {}",
+                            safe_target_description(target)
+                        ));
+                        false
+                    }
+                }
+            })
+            .on_new_window(move |target, _features| {
+                let origin = new_window_origin
+                    .read()
+                    .unwrap_or_else(|error| error.into_inner());
+                match decide_new_window(origin.as_ref(), &target) {
+                    NavigationDecision::OpenExternal => {
+                        log_app(&format!(
+                            "webview_new_window decision=external_browser {}",
+                            safe_target_description(&target)
+                        ));
+                        if let Err(error) = open_external_url(&target) {
+                            log_error(&format!(
+                                "external browser new-window request failed: {error}; {}",
+                                safe_target_description(&target)
+                            ));
+                        }
+                        NewWindowResponse::Deny
+                    }
+                    NavigationDecision::Allow | NavigationDecision::Deny => {
+                        log_error(&format!(
+                            "webview_new_window decision=deny {}",
+                            safe_target_description(&target)
+                        ));
+                        NewWindowResponse::Deny
+                    }
+                }
+            });
+    if let Some(data_directory) = test_webview_data_directory()? {
+        window_builder = window_builder.data_directory(data_directory);
+    }
+    let window = match window_builder.build() {
+        Ok(window) => window,
+        Err(error) => {
+            if let Some(worker) = background_plugin_prepare.take() {
+                let _ = worker.join();
+            }
+            log_error(&format!("main WebView creation failed: {error}"));
+            return Err(error.into());
         }
     };
-    log_boot_phase(
-        &boot_id,
-        "managed",
-        "plugins_prepared",
-        plugin_started.elapsed(),
-    );
+    configure_close_to_tray(&window);
+    create_tray(app)?;
 
-    app.manage(HostSupervisor::new());
-    let spawn_started = Instant::now();
-    let receiver = match start_host_streams(&handle, &runtime) {
-        Ok(receiver) => receiver,
-        Err(plugin_error) if plugin_transaction.is_some() => {
-            log_error(&format!(
-                "host failed with managed plugins; rolling back before one core retry: {plugin_error}"
-            ));
-            plugin_degraded_reason = Some(plugin_error.clone());
-            if let Some(transaction) = plugin_transaction.take() {
-                if let Err(rollback) = transaction.rollback() {
-                    fail(
-                        &handle,
-                        &format!("{plugin_error}; plugin rollback failed: {rollback}"),
-                    );
-                    return Ok(());
-                }
-            }
-            if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
-                fail(
-                    &handle,
-                    &format!("{plugin_error}; skin patch repair failed: {repair}"),
-                );
-                return Ok(());
-            }
-            match start_host_streams(&handle, &runtime) {
-                Ok(receiver) => receiver,
-                Err(message) => {
-                    fail(&handle, &message);
-                    return Ok(());
-                }
-            }
-        }
+    let selection = match selection {
+        Ok(selection) => selection,
         Err(message) => {
             fail(&handle, &message);
             return Ok(());
         }
+    };
+    let mut runtime = selection.primary;
+    app.manage(HostSupervisor::new());
+    let mut prevalidated_candidate = None;
+    if runtime
+        .activation
+        .as_ref()
+        .is_some_and(|activation| activation.candidate)
+    {
+        match start_and_activate_candidate(&handle, &runtime) {
+            Ok(ready) => {
+                log_boot_phase(
+                    &boot_id,
+                    "candidate",
+                    "candidate_promoted",
+                    runtime_started.elapsed(),
+                );
+                prevalidated_candidate = Some(ready);
+            }
+            Err(candidate_error) => {
+                log_error(&format!(
+                    "runtime candidate failed validation; falling back to active runtime: {candidate_error}"
+                ));
+                handle.state::<HostSupervisor>().shutdown_for_recovery();
+                if let Some(activation) = &runtime.activation {
+                    if let Ok(state) = read_runtime_state(&activation.runtime_root) {
+                        if state.candidate.as_ref().is_some_and(|candidate| {
+                            candidate.payload_digest == activation.payload_digest
+                        }) {
+                            if let Err(reject_error) = reject_candidate(
+                                &activation.runtime_root,
+                                &activation.payload_digest,
+                            ) {
+                                fail(
+                                    &handle,
+                                    &format!(
+                                        "{candidate_error}; candidate rejection failed: {reject_error}"
+                                    ),
+                                );
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                let Some(fallback) = selection.fallback else {
+                    fail(
+                        &handle,
+                        &format!(
+                            "the provisioned runtime failed validation and no previous runtime is available: {candidate_error}"
+                        ),
+                    );
+                    return Ok(());
+                };
+                runtime = fallback;
+            }
+        }
+    }
+
+    let spawn_started = Instant::now();
+    let (receiver, initial_ready, plugin_transaction, plugin_degraded_reason) = if let Some((
+        receiver,
+        lifecycle,
+        ready_url,
+    )) =
+        prevalidated_candidate.take()
+    {
+        (receiver, Some((lifecycle, ready_url)), None, None)
+    } else {
+        let mut plugin_degraded_reason = None;
+        let plugin_started = Instant::now();
+        let (plugin_result, plugin_duration) = match background_plugin_prepare.take() {
+            Some(worker) => match worker.join() {
+                Ok(result) => result,
+                Err(_) => (
+                    Err("managed plugin preparation worker panicked".to_owned()),
+                    plugin_started.elapsed(),
+                ),
+            },
+            None => {
+                let result = PluginManager::new(&runtime).prepare();
+                (result, plugin_started.elapsed())
+            }
+        };
+        let mut plugin_transaction = match plugin_result {
+            Ok(transaction) => Some(transaction),
+            Err(message) => {
+                log_error(&format!(
+                    "managed plugins were disabled before host startup: {message}"
+                ));
+                plugin_degraded_reason = Some(message);
+                None
+            }
+        };
+        log_boot_phase(&boot_id, "managed", "plugins_prepared", plugin_duration);
+        let receiver = match start_host_streams(&handle, &runtime) {
+            Ok(receiver) => receiver,
+            Err(plugin_error) if plugin_transaction.is_some() => {
+                log_error(&format!(
+                    "host failed with managed plugins; rolling back before one core retry: {plugin_error}"
+                ));
+                plugin_degraded_reason = Some(plugin_error.clone());
+                if let Some(transaction) = plugin_transaction.take() {
+                    if let Err(rollback) = transaction.rollback() {
+                        fail(
+                            &handle,
+                            &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                        );
+                        return Ok(());
+                    }
+                }
+                if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
+                    fail(
+                        &handle,
+                        &format!("{plugin_error}; skin patch repair failed: {repair}"),
+                    );
+                    return Ok(());
+                }
+                match start_host_streams(&handle, &runtime) {
+                    Ok(receiver) => receiver,
+                    Err(message) => {
+                        fail(&handle, &message);
+                        return Ok(());
+                    }
+                }
+            }
+            Err(message) => {
+                fail(&handle, &message);
+                return Ok(());
+            }
+        };
+        (receiver, None, plugin_transaction, plugin_degraded_reason)
     };
     log_boot_phase(
         &boot_id,
@@ -216,6 +353,7 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
     spawn_boot_coordinator(BootCoordinatorInputs {
         handle,
         initial_receiver: receiver,
+        initial_ready,
         runtime,
         host_origin,
         plugin_transaction,
@@ -225,6 +363,58 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         boot_started,
     });
     Ok(())
+}
+
+/// 用真实 Host 和插件 readiness 验证 candidate，并原子提交 runtime 与插件状态。
+fn start_and_activate_candidate(
+    handle: &AppHandle,
+    runtime: &RuntimePaths,
+) -> Result<(mpsc::Receiver<HostEvent>, LifecycleStateMachine, String), String> {
+    let activation = runtime
+        .activation
+        .as_ref()
+        .filter(|activation| activation.candidate)
+        .ok_or_else(|| "candidate activation metadata is missing".to_owned())?;
+    let mut transaction = PluginManager::new(runtime).prepare()?;
+    let receiver = start_host_streams(handle, runtime)?;
+    let (mut lifecycle, ready_url) = await_host_ready(
+        handle,
+        &receiver,
+        runtime.core_ready_timeout.max(CANDIDATE_CORE_READY_TIMEOUT),
+    )?;
+    await_plugins_ready(
+        handle,
+        &receiver,
+        &mut lifecycle,
+        runtime
+            .plugin_ready_timeout
+            .max(CANDIDATE_PLUGIN_READY_TIMEOUT),
+    )?;
+
+    if transaction.should_seed_sidebar() {
+        let origin = ready_url
+            .parse::<url::Url>()
+            .map_err(|error| format!("invalid candidate ready URL: {error}"))?;
+        sidebar_settings::initialize_sidebar_defaults(&origin)?;
+        transaction.mark_sidebar_seeded();
+    }
+
+    let previous_state = promote_candidate(&activation.runtime_root, &activation.payload_digest)?;
+    if let Err(commit_error) = transaction.commit() {
+        return match rollback_candidate_promotion(
+            &activation.runtime_root,
+            &activation.payload_digest,
+            &previous_state,
+        ) {
+            Ok(()) => Err(format!(
+                "candidate plugin transaction commit failed: {commit_error}"
+            )),
+            Err(rollback_error) => Err(format!(
+                "candidate plugin transaction commit failed: {commit_error}; runtime state rollback failed: {rollback_error}"
+            )),
+        };
+    }
+    Ok((receiver, lifecycle, ready_url))
 }
 
 /// 启动当前 supervisor 中的 Host，并为本次 PID 创建独立事件通道。
@@ -312,6 +502,7 @@ fn spawn_exit_watcher(handle: AppHandle, sender: mpsc::Sender<HostEvent>, expect
 struct BootCoordinatorInputs {
     handle: AppHandle,
     initial_receiver: mpsc::Receiver<HostEvent>,
+    initial_ready: Option<(LifecycleStateMachine, String)>,
     runtime: RuntimePaths,
     host_origin: Arc<RwLock<Option<url::Url>>>,
     plugin_transaction: Option<PluginTransaction>,
@@ -326,6 +517,7 @@ fn spawn_boot_coordinator(inputs: BootCoordinatorInputs) {
     let BootCoordinatorInputs {
         handle,
         initial_receiver,
+        initial_ready,
         runtime,
         host_origin,
         mut plugin_transaction,
@@ -336,55 +528,55 @@ fn spawn_boot_coordinator(inputs: BootCoordinatorInputs) {
     } = inputs;
     std::thread::spawn(move || {
         let mut receiver = initial_receiver;
-        let (mut lifecycle, mut ready_url) = match await_host_ready(
-            &handle,
-            &receiver,
-            runtime.core_ready_timeout,
-        ) {
-            Ok(ready) => ready,
-            Err(plugin_error) if plugin_transaction.is_some() => {
-                log_error(&format!(
+        let candidate_prevalidated = initial_ready.is_some();
+        let (mut lifecycle, mut ready_url) = match initial_ready {
+            Some(ready) => ready,
+            None => match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
+                Ok(ready) => ready,
+                Err(plugin_error) if plugin_transaction.is_some() => {
+                    log_error(&format!(
                     "managed plugin startup failed; restoring profile and retrying core once: {plugin_error}"
                 ));
-                plugin_degraded_reason = Some(plugin_error.clone());
-                let rollback_started = Instant::now();
-                handle.state::<HostSupervisor>().shutdown_for_recovery();
-                if let Some(transaction) = plugin_transaction.take() {
-                    if let Err(rollback) = transaction.rollback() {
+                    plugin_degraded_reason = Some(plugin_error.clone());
+                    let rollback_started = Instant::now();
+                    handle.state::<HostSupervisor>().shutdown_for_recovery();
+                    if let Some(transaction) = plugin_transaction.take() {
+                        if let Err(rollback) = transaction.rollback() {
+                            fail(
+                                &handle,
+                                &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                            );
+                            return;
+                        }
+                    }
+                    log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
+                    if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
                         fail(
                             &handle,
-                            &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                            &format!("{plugin_error}; skin patch repair failed: {repair}"),
                         );
                         return;
                     }
+                    receiver = match start_host_streams(&handle, &runtime) {
+                        Ok(receiver) => receiver,
+                        Err(core_error) => {
+                            fail(&handle, &core_error);
+                            return;
+                        }
+                    };
+                    match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
+                        Ok(ready) => ready,
+                        Err(core_error) => {
+                            fail(&handle, &core_error);
+                            return;
+                        }
+                    }
                 }
-                log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
-                if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
-                    fail(
-                        &handle,
-                        &format!("{plugin_error}; skin patch repair failed: {repair}"),
-                    );
+                Err(message) => {
+                    fail(&handle, &message);
                     return;
                 }
-                receiver = match start_host_streams(&handle, &runtime) {
-                    Ok(receiver) => receiver,
-                    Err(core_error) => {
-                        fail(&handle, &core_error);
-                        return;
-                    }
-                };
-                match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
-                    Ok(ready) => ready,
-                    Err(core_error) => {
-                        fail(&handle, &core_error);
-                        return;
-                    }
-                }
-            }
-            Err(message) => {
-                fail(&handle, &message);
-                return;
-            }
+            },
         };
 
         log_boot_phase(&boot_id, "managed", "core_ready", boot_started.elapsed());
@@ -394,75 +586,79 @@ fn spawn_boot_coordinator(inputs: BootCoordinatorInputs) {
         }
         handle.state::<HostController>().mark_ready();
 
-        let mut plugins_ready = match await_plugins_ready(
-            &handle,
-            &receiver,
-            &mut lifecycle,
-            runtime.plugin_ready_timeout,
-        ) {
-            Ok(()) => true,
-            Err(plugin_error) if plugin_transaction.is_some() => {
-                log_error(&format!(
+        let mut plugins_ready = if candidate_prevalidated {
+            true
+        } else {
+            match await_plugins_ready(
+                &handle,
+                &receiver,
+                &mut lifecycle,
+                runtime.plugin_ready_timeout,
+            ) {
+                Ok(()) => true,
+                Err(plugin_error) if plugin_transaction.is_some() => {
+                    log_error(&format!(
                     "managed plugins failed after core readiness; restoring profile and retrying core once: {plugin_error}"
                 ));
-                plugin_degraded_reason = Some(plugin_error.clone());
-                let _ = navigate_to_recovery(&handle, &host_origin);
-                let rollback_started = Instant::now();
-                handle.state::<HostSupervisor>().shutdown_for_recovery();
-                if let Some(transaction) = plugin_transaction.take() {
-                    if let Err(rollback) = transaction.rollback() {
+                    plugin_degraded_reason = Some(plugin_error.clone());
+                    let _ = navigate_to_recovery(&handle, &host_origin);
+                    let rollback_started = Instant::now();
+                    handle.state::<HostSupervisor>().shutdown_for_recovery();
+                    if let Some(transaction) = plugin_transaction.take() {
+                        if let Err(rollback) = transaction.rollback() {
+                            fail(
+                                &handle,
+                                &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                            );
+                            return;
+                        }
+                    }
+                    log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
+                    if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
                         fail(
                             &handle,
-                            &format!("{plugin_error}; plugin rollback failed: {rollback}"),
+                            &format!("{plugin_error}; skin patch repair failed: {repair}"),
                         );
                         return;
                     }
-                }
-                log_boot_phase(&boot_id, "managed", "rollback", rollback_started.elapsed());
-                if let Err(repair) = repair_skin_patch_before_core_retry(&runtime) {
-                    fail(
-                        &handle,
-                        &format!("{plugin_error}; skin patch repair failed: {repair}"),
-                    );
-                    return;
-                }
-                receiver = match start_host_streams(&handle, &runtime) {
-                    Ok(receiver) => receiver,
-                    Err(core_error) => {
-                        fail(&handle, &core_error);
-                        return;
-                    }
-                };
-                (lifecycle, ready_url) =
-                    match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
-                        Ok(ready) => ready,
+                    receiver = match start_host_streams(&handle, &runtime) {
+                        Ok(receiver) => receiver,
                         Err(core_error) => {
                             fail(&handle, &core_error);
                             return;
                         }
                     };
-                log_boot_phase(&boot_id, "core", "core_ready", boot_started.elapsed());
-                if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
-                    fail(&handle, &message);
-                    return;
-                }
-                handle.state::<HostController>().mark_ready();
-                match await_plugins_ready(
-                    &handle,
-                    &receiver,
-                    &mut lifecycle,
-                    runtime.plugin_ready_timeout,
-                ) {
-                    Ok(()) => true,
-                    Err(degraded) => {
-                        plugin_degraded_reason = Some(degraded);
-                        false
+                    (lifecycle, ready_url) =
+                        match await_host_ready(&handle, &receiver, runtime.core_ready_timeout) {
+                            Ok(ready) => ready,
+                            Err(core_error) => {
+                                fail(&handle, &core_error);
+                                return;
+                            }
+                        };
+                    log_boot_phase(&boot_id, "core", "core_ready", boot_started.elapsed());
+                    if let Err(message) = navigate_to_host(&handle, &host_origin, &ready_url) {
+                        fail(&handle, &message);
+                        return;
+                    }
+                    handle.state::<HostController>().mark_ready();
+                    match await_plugins_ready(
+                        &handle,
+                        &receiver,
+                        &mut lifecycle,
+                        runtime.plugin_ready_timeout,
+                    ) {
+                        Ok(()) => true,
+                        Err(degraded) => {
+                            plugin_degraded_reason = Some(degraded);
+                            false
+                        }
                     }
                 }
-            }
-            Err(plugin_error) => {
-                plugin_degraded_reason = Some(plugin_error);
-                false
+                Err(plugin_error) => {
+                    plugin_degraded_reason = Some(plugin_error);
+                    false
+                }
             }
         };
 

@@ -2,51 +2,131 @@
 
 ## 固定命令
 
+在 PowerShell 7 中运行：
+
 ```powershell
 npm ci
 npm run validate:icons
 npm run lint
 npm test
-npm audit
-Push-Location runtime-host; npm audit --omit=dev; Pop-Location
-Push-Location plugin-runtime; npm audit --omit=dev; Pop-Location
+npm run audit:release
+npm run test:pnpm-compat
 npm run stage:runtime
+npm run verify:runtime
 npm run stage:plugins
+npm run verify:plugins
+npm run package:payload
+npm run verify:payload
 npm run coverage
 npm run smoke
 npm run smoke:startup
+git diff --check
 ```
 
-`npm run coverage` 需要先安装 `llvm-tools-preview` 和 `cargo-llvm-cov`，并通过 `--fail-under-lines 80` 强制 Host、运行时、生命周期、导航、日志和就绪解析核心模块的行覆盖率不低于 80%。应用装配层 `desktop.rs`、`lib.rs`、`main.rs` 由 Windows 冒烟测试覆盖，不计入核心模块行覆盖率。发布前必须在本机完成两类门禁。
+`npm run coverage` 需要 `llvm-tools-preview` 与 `cargo-llvm-cov`，并以 80% 行覆盖率为最低门禁。
+应用装配层 `desktop.rs`、`lib.rs`、`main.rs` 由 Windows 冒烟覆盖，不计入核心模块覆盖率。
 
-自包含 release 和安装器验证使用：
+## 测试层次
+
+### Rust 与 Node 单元测试
+
+Rust 测试覆盖 Host readiness、生命周期、导航、日志、插件事务和 payload 状态机。payload 契约至少覆盖：
+
+- manifest/ZIP 摘要错误、截断 ZIP、文件数和展开大小超限；
+- 绝对路径、父级路径、ADS、设备名、尾随点或空格、大小写冲突和重复目标；
+- 并发 provision、中断 staging 恢复、candidate 晋升/拒绝、状态回滚与垃圾清理。
+
+Runtime Services 的 Node fixture 覆盖固定 pnpm 10 PATH、Git 环境隔离、明确的 modules/hoist 错误识别、
+控制文件字节快照、一次重建与一次重试，以及失败后旧依赖树和控制文件恢复。普通安装失败不得触发重建。
+
+### 构建闭包
+
+`verify-runtime` 和 `verify-plugins` 校验 schema 2 lock、入口、delivery、native external、资产和许可证。
+`package:payload` 还会使用真实 Node 加载 `yaml`、OpenTelemetry、AWS Bedrock、`node-pty` 和 `sharp`，
+然后生成三个 ZIP 与 manifest。`verify:payload` 使用运行时同一 Rust 模块重新验证。
+
+相同输入的可复现性检查必须强制执行两次非缓存构建，并比较以下四个文件的 SHA-256：
 
 ```powershell
-pwsh -NoProfile -File scripts/smoke-test.ps1 `
-  -Exe '..\src-tauri\target\release\dsh-desktop.exe' `
-  -TimeoutSeconds 180 `
-  -UseBundledRuntime
-pwsh -NoProfile -File scripts/installer-smoke.ps1 `
-  -Installer 'src-tauri\target\release\bundle\nsis\<installer>.exe'
-pwsh -NoProfile -File scripts/benchmark-startup.ps1 `
-  -Exe '<安装目录>\dsh-desktop.exe'
+npm run verify:reproducibility
 ```
 
-## 覆盖范围
+### 桌面生命周期
 
-Rust 单元测试覆盖 CoreReady/PluginsReady 两级协议、旧 Host 兼容、Host 原点导航、私有 Node/pnpm PATH 优先级、两阶段超时、快速进程树清理、异常退出码、重复退出、日志脱敏与 `5 MiB × 3` 轮转。插件测试覆盖 9 个 bundle 的固定顺序、连续 prepare 的字节与 mtime 幂等、用户安装优先、禁用保持、Skill 管理、事务提交/回滚和真实 Windows junction。runtime-services 的 Node 测试验证核心服务同时可用后只输出一次 CoreReady。
+`smoke-test.ps1` 使用本次构建的桌面程序并只管理本次记录的 PID：
 
-Windows 冒烟测试使用仓库内的 `scripts/fixtures/fake-host.js`：
+1. 等待 Host CoreReady/PluginsReady 和严格回环 URL；
+2. 二次启动确认 single-instance，只聚焦现有窗口；
+3. 关闭窗口确认应用隐藏到托盘且 Host 存活；
+4. `--quit-existing` 进入正式退出路径；
+5. 确认桌面与记录的 Host 进程树均结束。
 
-1. 启动本次构建的桌面程序并记录唯一 Host PID；
-2. 确认就绪日志和窗口导航；
-3. 再次启动并确认现有窗口收到聚焦事件，Host 数量仍为一个；
-4. 关闭主窗口并确认应用和 Host 继续运行；
-5. 通过 `--quit-existing` 进入与托盘“退出”相同的清理路径；
-6. 确认记录的 Host PID 已结束。
+`startup-scenarios.ps1` 使用 fake Host 覆盖核心先就绪、CoreReady 后崩溃和插件永不完成。失败清理禁止
+扫描或批量终止其他 `node.exe`。
 
-脚本失败兜底只终止本次记录的桌面 PID 与 Host PID，禁止扫描或批量终止其他 `node.exe`。
+### Payload 安装器
 
-`startup-scenarios.ps1` 额外覆盖核心先就绪且插件延迟、CoreReady 后崩溃、插件永不完成三种恢复路径。`benchmark-startup.ps1` 对正式安装版执行 20 次热启动并校验 P95 不超过 8 秒，清理当前 digest 后执行 3 次冷启动并校验每次不超过 20 秒。
+```powershell
+pwsh -NoProfile -File scripts/installer-smoke.ps1 `
+  -Installer 'src-tauri\target\release\bundle\nsis\<installer>.exe' `
+  -InstallRoot '.installer-smoke\payload' `
+  -TimeoutSeconds 300 `
+  -Payload `
+  -SkipMarket
+```
 
-发布验证先用 fake Host 检查可注入 supervisor 和侧栏设置 API，再安装 NSIS 包并用内置 Node/DSH/插件重跑同一套生命周期检查。安装器冒烟还验证 digest 插件 store 已预置、首次启动不复制完整插件树，且卸载后缓存和用户 profile 均保留。
+测试使用系统临时目录下的显式 runtime 根，验证四个安装资源、provision、真实 Host 与 9 个内置 bundle
+readiness、candidate 晋升、single-instance、托盘生命周期、卸载 runtime 以及保留 `~/.dsh` sentinel。
+测试 runtime 根会写入安装元数据；卸载前必须规范化并限制到固定临时目录前缀，不能接受任意删除路径。
+
+移除 `-SkipMarket` 后，额外通过 Market HTTP API 安装和卸载 `dsh-pet`，覆盖用户插件真实链路。该项需要网络，
+且必须使用隔离 profile。
+
+### 升级、回滚与性能
+
+preview.8 的发布矩阵命令如下；preview.9/10 还必须传入上一轮 payload 安装器：
+
+```powershell
+npm run test:upgrade-matrix -- `
+  -LegacyInstaller '.deploy-artifacts\DeepSeek.Harness.Desktop_0.1.0-preview.7_x64-setup.exe' `
+  -PayloadInstaller 'src-tauri\target\release\bundle\nsis\DeepSeek Harness Desktop_0.1.0-preview.8_x64-setup.exe'
+
+npm run benchmark:compare -- `
+  -LegacyInstaller '.deploy-artifacts\DeepSeek.Harness.Desktop_0.1.0-preview.7_x64-setup.exe' `
+  -PayloadInstaller 'src-tauri\target\release\bundle\nsis\DeepSeek Harness Desktop_0.1.0-preview.8_x64-setup.exe'
+```
+
+启动对比使用统一外部墙钟，从 `Start-Process` 前开始，到两版都写出 `host ready` 为止；该日志表示 core
+与 plugins 均已 ready。禁止将 preview.7 的 Host 内部耗时与 preview.8 的进程级 `core_ready` 直接比较。
+健康 payload 启动会并行执行插件 prepare 与 WebView2 初始化；Windows junction 目标按 Win32 路径语义比较，
+同目标的 verbatim、长路径或大小写差异不得触发链接重建。candidate、首次迁移和异常状态仍执行完整资源校验。
+
+矩阵覆盖 clean install、legacy 到 payload、运行中升级、损坏 manifest/截断 ZIP、candidate readiness 失败、
+垃圾清理和卸载。指定 `-PreviousPayloadInstaller` 后增加 payload 到 payload 的停止/运行中升级。旧 active 必须
+保持可用，所有 install、`LOCALAPPDATA` 和 `DSH_HOME` 都位于独立系统临时目录，任何路径都不得删除用户 profile。
+Preview.7 需要展开和预置 legacy 小文件树，安装阶段单独允许最多 15 分钟；payload 安装及 Host/readiness
+仍使用命令传入的 180 秒门限，不能用 legacy 的宽限掩盖新版本启动超时。
+
+安装器矩阵必须在专用、可丢弃的 Windows 用户中执行。`/D=`、`LOCALAPPDATA` 和 `DSH_HOME` 只能隔离
+文件，不能改变 NSIS 固定的 HKCU 卸载键和 Shell 快捷方式名。四个安装器门禁脚本会在开始前检查
+`dsh-desktop` 进程、产品注册表键、自动启动值和快捷方式，任一已存在就拒绝执行。自动化安装统一传入
+`/NS`，WebView2 数据目录也限制在系统临时目录的固定测试结构；结束后只清理由本轮安装根拥有的
+注册表与快捷方式。
+
+`benchmark-compare.ps1` 安装两个正式安装器，复制相同 seed profile，各预热一次后交替执行 20 对 warm 启动；
+报告所有样本、P50/P95、安装器 SHA、Windows/CPU 信息和各 3 次 cold。payload 相对 legacy 的劣化不得超过
+5% 或 100 ms，两者取较大值。不得用单独测得的 payload P95 或 fake Host 数据替代发布结论。
+preview.8 最终报告为 legacy P95 5,533 ms、payload P95 5,547 ms、门限 5,810 ms，门禁通过。
+
+统一门禁命令会串行执行全部发布检查并输出 JSON/Markdown：
+
+```powershell
+npm run release:gate -- `
+  -LegacyInstaller '<preview.7 legacy installer>' `
+  -PayloadInstaller '<current payload installer>'
+```
+
+## 失败处理
+
+任一功能、回滚、体积、速度或审计门禁失败时，`npm run build` 继续使用 legacy。不得删除失败产物掩盖问题、
+放宽阈值或跳过 payload verify。无法执行的门禁必须在发布检查表中保留未完成状态并说明原因。

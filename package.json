@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-tauri",
-  "version": "0.1.0-preview.7",
+  "version": "0.1.0-preview.8",
   "private": true,
   "description": "Tauri desktop shell for DeepSeek Harness (dsh web)",
   "scripts": {
@@ -8,21 +8,32 @@
     "generate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/generate-icons.ps1",
     "validate:icons": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/validate-icons.ps1",
     "lint": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings",
-    "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked && node --test desktop-plugins/runtime-services/test/runtime-services.test.mjs",
-    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --lib --locked --ignore-filename-regex \"(desktop|lib|main)\\.rs$\" --fail-under-lines 80",
+    "test": "cargo test --manifest-path src-tauri/Cargo.toml --locked && node --test desktop-plugins/runtime-services/test/runtime-services.test.mjs && pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/test-release-installer-isolation.ps1",
+    "coverage": "cargo llvm-cov --manifest-path src-tauri/Cargo.toml --locked --ignore-filename-regex \"(desktop|lib|main)\\.rs$\" --fail-under-lines 80",
     "smoke": "pwsh -NoProfile -File scripts/smoke-test.ps1",
     "smoke:startup": "pwsh -NoProfile -File scripts/startup-scenarios.ps1",
     "benchmark:startup": "pwsh -NoProfile -File scripts/benchmark-startup.ps1",
+    "benchmark:compare": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/benchmark-compare.ps1",
     "smoke:installer": "pwsh -NoProfile -File scripts/installer-smoke.ps1",
+    "test:upgrade-matrix": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/upgrade-matrix.ps1",
     "stage:runtime": "pwsh -NoProfile -File scripts/stage-runtime.ps1",
     "verify:runtime": "pwsh -NoProfile -File scripts/verify-runtime.ps1",
     "stage:plugins": "pwsh -NoProfile -File scripts/stage-plugins.ps1",
     "verify:plugins": "pwsh -NoProfile -File scripts/verify-plugins.ps1",
+    "audit:release": "pwsh -NoProfile -File scripts/audit-release.ps1",
+    "test:pnpm-compat": "node scripts/pnpm-compat-matrix.mjs",
+    "verify:reproducibility": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/verify-payload-reproducibility.ps1",
+    "release:gate": "pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/release-gate.ps1",
     "release:artifacts": "pwsh -NoProfile -File scripts/write-release-artifacts.ps1",
-    "dev": "npm run validate:icons && tauri dev",
-    "build": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build"
+    "package:payload": "pwsh -NoProfile -File scripts/stage-payload.ps1",
+    "verify:payload": "cargo run --quiet --manifest-path src-tauri/Cargo.toml --example payload-tool -- verify --resources src-tauri/resources/payload",
+    "dev": "npm run validate:icons && tauri dev --config src-tauri/tauri.legacy.conf.json",
+    "build:legacy": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build --config src-tauri/tauri.legacy.conf.json",
+    "build:payload": "pwsh -NoProfile -File scripts/build-payload.ps1",
+    "build": "npm run build:legacy"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2"
+    "@tauri-apps/cli": "^2",
+    "esbuild": "0.28.2"
   }
 }

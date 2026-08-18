@@ -1,8 +1,11 @@
 //! Node 与 DSH CLI 运行时路径解析。
 
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+use crate::payload::{read_runtime_state, RuntimeSlot};
 
 const DEFAULT_CORE_READY_TIMEOUT: Duration = Duration::from_secs(15);
 const DEFAULT_PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(30);
@@ -24,13 +27,91 @@ pub struct RuntimePaths {
     pub working_directory: PathBuf,
     pub core_ready_timeout: Duration,
     pub plugin_ready_timeout: Duration,
+    pub immutable_plugins: bool,
+    pub activation: Option<RuntimeActivation>,
+}
+
+/// 记录当前路径是否来自 payload candidate，供就绪后提升或失败回退。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeActivation {
+    pub runtime_root: PathBuf,
+    pub payload_digest: String,
+    pub runtime_abi: u32,
+    pub candidate: bool,
+}
+
+/// 启动时解析出的主运行时和唯一回退运行时。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct StartupRuntimeSelection {
+    pub primary: RuntimePaths,
+    pub fallback: Option<RuntimePaths>,
 }
 
 impl RuntimePaths {
     /// 解析桌面运行时；开发构建允许环境覆盖，发布构建只接受内置资源。
     pub fn resolve(resource_dir: &Path) -> Result<Self, String> {
-        RuntimeInputs::from_environment().resolve(resource_dir, cfg!(debug_assertions))
+        Ok(Self::resolve_startup(resource_dir)?.primary)
     }
+
+    /// 解析 payload candidate/active 及回退关系；没有状态时保持 legacy 行为。
+    pub fn resolve_startup(resource_dir: &Path) -> Result<StartupRuntimeSelection, String> {
+        RuntimeInputs::from_environment().resolve_startup(resource_dir, cfg!(debug_assertions))
+    }
+}
+
+/// 返回当前用户桌面托管 runtime 根目录；正常启动不接受 release 环境覆盖。
+pub fn default_runtime_root() -> Result<PathBuf, String> {
+    let local_app_data = non_empty_env("LOCALAPPDATA")
+        .ok_or_else(|| "LOCALAPPDATA is not available for the managed runtime".to_owned())?;
+    Ok(PathBuf::from(local_app_data)
+        .join("dsh-desktop")
+        .join("runtime"))
+}
+
+/// 返回安装器 smoke 专用的 WebView2 数据目录；正常发布启动不读取任意目录覆盖。
+pub fn test_webview_data_directory() -> Result<Option<PathBuf>, String> {
+    let Some(value) = non_empty_env("DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR") else {
+        return Ok(None);
+    };
+    validate_test_webview_data_directory(Path::new(&value), &env::temp_dir()).map(Some)
+}
+
+/// 只接受系统临时目录下固定两层结构，canonicalize 同时拒绝不存在目录和链接逃逸。
+fn validate_test_webview_data_directory(
+    data_directory: &Path,
+    temp_root: &Path,
+) -> Result<PathBuf, String> {
+    let canonical_temp = fs::canonicalize(temp_root)
+        .map_err(|error| format!("could not canonicalize system temp directory: {error}"))?;
+    let canonical_data = fs::canonicalize(data_directory).map_err(|error| {
+        format!(
+            "could not canonicalize WebView test data directory {}: {error}",
+            data_directory.display()
+        )
+    })?;
+    let relative = canonical_data.strip_prefix(&canonical_temp).map_err(|_| {
+        format!(
+            "WebView test data directory is outside the system temp directory: {}",
+            canonical_data.display()
+        )
+    })?;
+    let components = relative
+        .components()
+        .map(|component| component.as_os_str().to_string_lossy().into_owned())
+        .collect::<Vec<_>>();
+    let valid_prefix = components.first().is_some_and(|component| {
+        let component = component.to_ascii_lowercase();
+        component.starts_with("dsh-desktop-installer-smoke-")
+            || component.starts_with("dsh-desktop-smoke-")
+    });
+    if components.len() != 2 || !valid_prefix || !components[1].eq_ignore_ascii_case("webview-data")
+    {
+        return Err(format!(
+            "WebView test data directory has an unexpected path shape: {}",
+            canonical_data.display()
+        ));
+    }
+    Ok(canonical_data)
 }
 
 /// 将环境读取与路径决策分离，测试可以注入确定性输入。
@@ -47,6 +128,8 @@ struct RuntimeInputs {
     core_ready_timeout: Option<String>,
     plugin_ready_timeout: Option<String>,
     path_directories: Vec<PathBuf>,
+    local_app_data: Option<String>,
+    runtime_root: Option<PathBuf>,
 }
 
 impl RuntimeInputs {
@@ -66,7 +149,71 @@ impl RuntimeInputs {
             path_directories: env::var_os("PATH")
                 .map(|path| env::split_paths(&path).collect())
                 .unwrap_or_default(),
+            local_app_data: non_empty_env("LOCALAPPDATA"),
+            runtime_root: if cfg!(debug_assertions) {
+                non_empty_env("DSH_DESKTOP_RUNTIME_ROOT").map(PathBuf::from)
+            } else {
+                None
+            },
         }
+    }
+
+    /// 根据单状态文件选择 candidate、active 或 legacy 资源。
+    fn resolve_startup(
+        &self,
+        resource_dir: &Path,
+        allow_development_fallbacks: bool,
+    ) -> Result<StartupRuntimeSelection, String> {
+        let runtime_root = self.runtime_root.clone().or_else(|| {
+            self.local_app_data
+                .as_ref()
+                .map(|path| Path::new(path).join("dsh-desktop/runtime"))
+        });
+        let Some(runtime_root) = runtime_root else {
+            return Ok(StartupRuntimeSelection {
+                primary: self.resolve(resource_dir, allow_development_fallbacks)?,
+                fallback: None,
+            });
+        };
+        let state = read_runtime_state(&runtime_root)?;
+        if let Some(candidate) = &state.candidate {
+            let primary = self.resolve_payload_slot(&runtime_root, candidate, true)?;
+            let fallback = state
+                .active
+                .as_ref()
+                .map(|active| self.resolve_payload_slot(&runtime_root, active, false))
+                .transpose()?;
+            return Ok(StartupRuntimeSelection { primary, fallback });
+        }
+        if let Some(active) = &state.active {
+            return Ok(StartupRuntimeSelection {
+                primary: self.resolve_payload_slot(&runtime_root, active, false)?,
+                fallback: None,
+            });
+        }
+        Ok(StartupRuntimeSelection {
+            primary: self.resolve(resource_dir, allow_development_fallbacks)?,
+            fallback: None,
+        })
+    }
+
+    /// 将摘要状态映射为 runtime 根目录下的固定路径，并关闭开发回退。
+    fn resolve_payload_slot(
+        &self,
+        runtime_root: &Path,
+        slot: &RuntimeSlot,
+        candidate: bool,
+    ) -> Result<RuntimePaths, String> {
+        slot.validate()?;
+        let mut paths = self.resolve(&runtime_root.join(&slot.payload_digest), false)?;
+        paths.immutable_plugins = true;
+        paths.activation = Some(RuntimeActivation {
+            runtime_root: runtime_root.to_owned(),
+            payload_digest: slot.payload_digest.clone(),
+            runtime_abi: slot.runtime_abi,
+            candidate,
+        });
+        Ok(paths)
     }
 
     /// 根据已捕获输入生成完整运行时路径。
@@ -92,6 +239,8 @@ impl RuntimeInputs {
             working_directory: self.resolve_working_directory(),
             core_ready_timeout: self.resolve_core_ready_timeout(),
             plugin_ready_timeout: self.resolve_plugin_ready_timeout(),
+            immutable_plugins: false,
+            activation: None,
         })
     }
 
@@ -273,8 +422,10 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        RuntimeInputs, CLI_RELATIVE_PATH, DEFAULT_CORE_READY_TIMEOUT, DEFAULT_PLUGIN_READY_TIMEOUT,
+        validate_test_webview_data_directory, RuntimeInputs, CLI_RELATIVE_PATH,
+        DEFAULT_CORE_READY_TIMEOUT, DEFAULT_PLUGIN_READY_TIMEOUT,
     };
+    use crate::payload::{write_runtime_state, RuntimeSlot, RuntimeState};
 
     struct TestDirectory(PathBuf);
 
@@ -302,6 +453,26 @@ mod tests {
             fs::write(&path, b"test").unwrap();
             path
         }
+    }
+
+    #[test]
+    fn webview_test_data_directory_accepts_only_the_installer_smoke_shape() {
+        let temp = TestDirectory::new("webview-validation-temp");
+        let valid_root = temp.path().join("dsh-desktop-installer-smoke-fixture");
+        let valid = valid_root.join("webview-data");
+        fs::create_dir_all(&valid).unwrap();
+        assert_eq!(
+            validate_test_webview_data_directory(&valid, temp.path()).unwrap(),
+            fs::canonicalize(&valid).unwrap()
+        );
+
+        let wrong_leaf = valid_root.join("runtime");
+        fs::create_dir_all(&wrong_leaf).unwrap();
+        assert!(validate_test_webview_data_directory(&wrong_leaf, temp.path()).is_err());
+
+        let wrong_prefix = temp.path().join("untrusted-smoke/webview-data");
+        fs::create_dir_all(&wrong_prefix).unwrap();
+        assert!(validate_test_webview_data_directory(&wrong_prefix, temp.path()).is_err());
     }
 
     impl Drop for TestDirectory {
@@ -469,5 +640,80 @@ mod tests {
         .resolve(resources.path(), false)
         .unwrap();
         assert_eq!(resolved.dsh_home, user.path().join(".dsh"));
+    }
+
+    #[test]
+    fn startup_prefers_candidate_and_keeps_active_as_fallback() {
+        let resources = TestDirectory::new("runtime-selection-resources");
+        let runtime_root = TestDirectory::new("runtime-selection-root");
+        resources.file("node/node.exe");
+        resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+        let active_digest = "a".repeat(64);
+        let candidate_digest = "b".repeat(64);
+        for digest in [&active_digest, &candidate_digest] {
+            runtime_root.file(&format!("{digest}/node/node.exe"));
+            runtime_root.file(&format!("{digest}/host/{CLI_RELATIVE_PATH}"));
+            fs::create_dir_all(
+                runtime_root
+                    .path()
+                    .join(digest)
+                    .join("plugins/node_modules"),
+            )
+            .unwrap();
+        }
+        write_runtime_state(
+            runtime_root.path(),
+            &RuntimeState {
+                schema_version: 1,
+                active: Some(RuntimeSlot::new(&active_digest, 1, "old")),
+                previous: None,
+                candidate: Some(RuntimeSlot::new(&candidate_digest, 1, "new")),
+            },
+        )
+        .unwrap();
+
+        let selection = RuntimeInputs {
+            runtime_root: Some(runtime_root.path().to_owned()),
+            ..Default::default()
+        }
+        .resolve_startup(resources.path(), false)
+        .unwrap();
+
+        assert_eq!(
+            selection
+                .primary
+                .activation
+                .as_ref()
+                .unwrap()
+                .payload_digest,
+            candidate_digest
+        );
+        assert!(selection.primary.activation.as_ref().unwrap().candidate);
+        assert!(selection.primary.immutable_plugins);
+        let fallback = selection.fallback.expect("candidate 必须保留 active 回退");
+        assert_eq!(
+            fallback.activation.as_ref().unwrap().payload_digest,
+            active_digest
+        );
+        assert!(!fallback.activation.as_ref().unwrap().candidate);
+    }
+
+    #[test]
+    fn startup_uses_legacy_resources_when_no_payload_state_exists() {
+        let resources = TestDirectory::new("runtime-selection-legacy");
+        let runtime_root = TestDirectory::new("runtime-selection-empty");
+        resources.file("node/node.exe");
+        resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
+
+        let selection = RuntimeInputs {
+            runtime_root: Some(runtime_root.path().to_owned()),
+            ..Default::default()
+        }
+        .resolve_startup(resources.path(), false)
+        .unwrap();
+
+        assert!(selection.primary.activation.is_none());
+        assert!(!selection.primary.immutable_plugins);
+        assert!(selection.fallback.is_none());
     }
 }

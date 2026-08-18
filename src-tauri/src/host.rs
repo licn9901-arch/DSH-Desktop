@@ -215,6 +215,20 @@ impl HostSupervisor {
             return;
         };
         let pid = child.id();
+        match child.try_exit_code() {
+            Ok(Some(exit_code)) => {
+                log_app(&format!(
+                    "host already exited before shutdown: pid={pid}, code={exit_code:?}"
+                ));
+                return;
+            }
+            Ok(None) => {}
+            Err(error) => {
+                log_error(&format!(
+                    "failed to inspect host before shutdown pid={pid}: {error}"
+                ));
+            }
+        }
         log_app(&format!("requesting host shutdown: pid={pid}"));
         if let Err(error) = terminator.request(pid) {
             log_error(&format!(
@@ -451,6 +465,8 @@ mod tests {
             working_directory: std::env::temp_dir(),
             core_ready_timeout: Duration::from_secs(1),
             plugin_ready_timeout: Duration::from_secs(1),
+            immutable_plugins: false,
+            activation: None,
         };
         let error = HostSupervisor::spawn(&paths).err().unwrap();
         assert!(error.contains("failed to start Node"));
@@ -460,7 +476,7 @@ mod tests {
     fn graceful_exit_and_repeated_shutdown_are_idempotent() {
         let supervisor = supervisor(FakeChild {
             pid: 43,
-            polls: VecDeque::from([Some(Some(0))]),
+            polls: VecDeque::from([None, Some(Some(0))]),
             wait_code: Some(0),
             forced: None,
         });
@@ -468,6 +484,22 @@ mod tests {
         supervisor.shutdown_with(&terminator, Duration::from_secs(1), Duration::ZERO);
         supervisor.shutdown_with(&terminator, Duration::ZERO, Duration::ZERO);
         assert_eq!(*terminator.requested.lock().unwrap(), vec![43]);
+        assert!(terminator.forced.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn recovery_does_not_signal_a_host_that_already_exited() {
+        let supervisor = supervisor(FakeChild {
+            pid: 46,
+            polls: VecDeque::from([Some(Some(97))]),
+            wait_code: Some(97),
+            forced: None,
+        });
+        let terminator = RecordingTerminator::default();
+
+        supervisor.shutdown_for_recovery_with(&terminator);
+
+        assert!(terminator.requested.lock().unwrap().is_empty());
         assert!(terminator.forced.lock().unwrap().is_empty());
     }
 
@@ -518,6 +550,8 @@ mod tests {
             working_directory: std::env::temp_dir(),
             core_ready_timeout: Duration::from_secs(1),
             plugin_ready_timeout: Duration::from_secs(1),
+            immutable_plugins: false,
+            activation: None,
         };
         let inherited = std::env::join_paths([
             std::path::Path::new(r"C:\Windows\System32"),

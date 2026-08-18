@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "dshVersion": "0.1.0-rc.6",
   "sharedPackages": [
     "@deepseek-ai/*",
@@ -10,7 +10,7 @@
   "plugins": [
     {
       "package": "@dsh-desktop/runtime-services",
-      "version": "0.1.0-preview.7",
+      "version": "0.1.0-preview.8",
       "bundleId": "desktop-runtime-services",
       "license": "MIT",
       "source": {
@@ -22,9 +22,17 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": [],
+        "assets": ["cordis.patch.yml"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "为 Market 提供固定 web profile 与串行包管理服务",
-        "按 profile 元数据选择内置 pnpm 9、10 或 11"
+        "始终使用内置 pnpm 10；仅在明确的 modules/hoist 不兼容时执行一次事务式重建"
       ]
     },
     {
@@ -48,6 +56,14 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js"],
+        "assets": ["cordis.patch.yml"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "搜索工作区路径",
         "向输入框插入相对路径引用，不读取或注入文件内容"
@@ -76,6 +92,14 @@
         "SKILL.md",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js"],
+        "assets": ["lib/assets/mermaid.js", "lib/assets/three.js", "cordis.patch.yml", "SKILL.md"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "在回答中渲染交互式 UI、Mermaid 和 Three.js",
         "将 GenUI action 事件作为消息回传模型"
@@ -97,6 +121,14 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js", "lib/client-editor.js", "lib/client-registry.js", "lib/client-terminal.js"],
+        "assets": ["lib/invariant.js", "cordis.patch.yml"],
+        "runtimeExternals": ["schemastery", "ws"],
+        "nativeExternals": ["node-pty"],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "读写工作区文件并执行 Git 操作",
         "启动和控制本机 PTY 终端",
@@ -105,7 +137,7 @@
     },
     {
       "package": "@dsh-desktop/theme-settings",
-      "version": "0.1.0-preview.7",
+      "version": "0.1.0-preview.8",
       "bundleId": "desktop-theme-settings",
       "license": "MIT",
       "source": {
@@ -118,6 +150,14 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js"],
+        "assets": ["cordis.patch.yml"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "原子切换精确白名单中的桌面托管 bundle，不修改依赖或卸载文件",
         "配置 Hindsight 服务、凭据状态和项目级显式启用",
@@ -139,6 +179,14 @@
         "cordis.patch.yml",
         "skins"
       ],
+      "delivery": {
+        "serverEntries": [],
+        "clientEntries": [],
+        "assets": ["cordis.patch.yml", "skins"],
+        "runtimeExternals": ["@linxin666/dsh-client-ui-skin-center"],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "列出、试穿、应用和恢复皮肤",
         "应用皮肤时写入 $DSH_HOME/cordis.patch.yml"
@@ -159,6 +207,14 @@
         "cordis.patch.yml",
         "skill/SKILL.md"
       ],
+      "delivery": {
+        "serverEntries": ["dist/dsh.js"],
+        "clientEntries": [],
+        "assets": ["cordis.patch.yml", "skill/SKILL.md"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["package.json"]
+      },
       "permissions": [
         "仅对用户显式 opt-in 的 DSH 项目执行记忆 retain/recall",
         "连接用户后续配置的 Hindsight 服务"
@@ -181,6 +237,14 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["dsh/index.js"],
+        "clientEntries": ["dsh/client.js"],
+        "assets": ["dsh/vision-schema.json", "cordis.patch.yml"],
+        "runtimeExternals": [],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "读取用户显式提供给模型的图片",
         "调用用户配置的视觉端点或本机 Agent CLI"
@@ -201,6 +265,14 @@
         "cordis.patch.yml",
         "LICENSE"
       ],
+      "delivery": {
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js"],
+        "assets": ["cordis.patch.yml"],
+        "runtimeExternals": ["schemastery"],
+        "nativeExternals": [],
+        "licenseFiles": ["LICENSE"]
+      },
       "permissions": [
         "列出、启用、停用和删除 DSH Skills",
         "读写 ~/.dsh/mcp.json 并管理 MCP 连接"

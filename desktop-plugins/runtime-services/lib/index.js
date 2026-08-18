@@ -1,9 +1,30 @@
-import { readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { spawn } from "node:child_process";
 import { delimiter, isAbsolute, join } from "node:path";
+import { PassThrough } from "node:stream";
 
 const PROFILE_NAME = "web";
-const SUPPORTED_PNPM_MAJORS = new Set([9, 10, 11]);
+const FIXED_PNPM_DIRECTORY = "pnpm-10";
+const PROFILE_CONTROL_FILES = [
+  "package.json",
+  "pnpm-lock.yaml",
+  "pnpm-workspace.yaml",
+  "cordis.patch.yml",
+];
+const PNPM_COMPATIBILITY_ERRORS = [
+  "ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF",
+  "ERR_PNPM_LOCKFILE_BREAKING_CHANGE",
+  "ERR_PNPM_VIRTUAL_STORE_DIR_MAX_LENGTH_DIFF",
+  "ERR_PNPM_UNEXPECTED_STORE",
+  "modules directory was created using a different hoist-pattern",
+  "modules directory is not compatible with the current pnpm",
+];
 const GITHUB_HTTPS_REWRITES = [
   "git+ssh://git@github.com/",
   "ssh://git@github.com/",
@@ -20,56 +41,6 @@ function requiredAbsolutePath(name) {
   return value;
 }
 
-/** 校验识别到的 pnpm major，避免用未知运行时改写现有 profile。 */
-function assertSupportedPnpmMajor(major) {
-  if (!SUPPORTED_PNPM_MAJORS.has(major)) {
-    throw new Error(`unsupported profile pnpm major: ${major}; supported majors are 9, 10 and 11`);
-  }
-  return major;
-}
-
-/** 从 packageManager 字符串读取 pnpm major。 */
-function packageManagerMajor(value) {
-  if (typeof value !== "string") return null;
-  const match = /^pnpm@(\d+)(?:\.|\+|$)/.exec(value.trim());
-  return match === null ? null : assertSupportedPnpmMajor(Number(match[1]));
-}
-
-/** 从 pnpm modules 元数据读取创建该 profile 的 pnpm major。 */
-function selectPnpmMajor(text) {
-  if (typeof text !== "string" || text.trim() === "") return 11;
-
-  // pnpm 当前把 .modules.yaml 写成 JSON；先结构化解析，避免依赖展示格式。
-  try {
-    const metadata = JSON.parse(text);
-    const managerMajor = packageManagerMajor(metadata?.packageManager);
-    if (managerMajor !== null) return managerMajor;
-    const storeMatch = /[\\/]store[\\/]v(\d+)(?:[\\/]|$)/i.exec(metadata?.storeDir ?? "");
-    if (storeMatch !== null) return assertSupportedPnpmMajor(Number(storeMatch[1]));
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error;
-  }
-
-  // 兼容旧 pnpm 写出的 YAML，以及人为维护的最小 modules 元数据。
-  const managerMatch = /^\s*["']?packageManager["']?\s*:\s*["']?(pnpm@\d+(?:\.[^\s"']*)?)/m.exec(text);
-  const managerMajor = packageManagerMajor(managerMatch?.[1]);
-  if (managerMajor !== null) return managerMajor;
-
-  const storeMatch = /^\s*["']?storeDir["']?\s*:\s*["']?.*?[\\/]store[\\/]v(\d+)(?:[\\/"']|$)/im.exec(text);
-  if (storeMatch !== null) return assertSupportedPnpmMajor(Number(storeMatch[1]));
-  return 11;
-}
-
-/** 缺少 modules 元数据的新 profile 使用当前固定的 pnpm 11。 */
-function profilePnpmMajor(profileDirectory) {
-  try {
-    return selectPnpmMajor(readFileSync(join(profileDirectory, "node_modules", ".modules.yaml"), "utf8"));
-  } catch (error) {
-    if (error?.code === "ENOENT") return 11;
-    throw error;
-  }
-}
-
 /**
  * 为 Market 的公共 GitHub 依赖增加 HTTPS 兜底，同时保留调用方已有的 Git 配置。
  * pnpm 会把 `github:` 简写重新解析成 SSH URL；未配置 GitHub SSH 密钥时，任意旧依赖都会阻断整个 profile 的安装。
@@ -78,6 +49,10 @@ function packageManagerEnvironment(baseEnvironment, toolchain) {
   const environment = {
     ...baseEnvironment,
     PATH: `${toolchain}${delimiter}${baseEnvironment.PATH ?? ""}`,
+    // pnpm 10 默认会服从 profile 的 packageManager 字段下载旧 major；桌面必须始终执行内置版本。
+    npm_config_manage_package_manager_versions: "false",
+    COREPACK_ENABLE_PROJECT_SPEC: "0",
+    COREPACK_ENABLE_DOWNLOAD_PROMPT: "0",
   };
   const rawCount = baseEnvironment.GIT_CONFIG_COUNT;
   const existingCount = rawCount === undefined ? 0 : Number(rawCount);
@@ -102,6 +77,34 @@ function readProfileSnapshot(profileDirectory) {
       ? manifest.dsh.profile.bundles.filter((value) => typeof value === "string")
       : [],
   };
+}
+
+/** 捕获 profile 与全局 Cordis 控制文件的原始字节，不解析也不重排内容。 */
+function captureControlFiles(profileDirectory, dshHome) {
+  const paths = PROFILE_CONTROL_FILES.map((name) => join(profileDirectory, name));
+  paths.push(join(dshHome, "cordis.patch.yml"));
+  return paths.map((path) => ({
+    path,
+    bytes: existsSync(path) ? readFileSync(path) : null,
+  }));
+}
+
+/** 使用同目录临时文件恢复快照；原先不存在的文件会被删除。 */
+function restoreControlFiles(snapshots) {
+  for (const snapshot of snapshots) {
+    if (snapshot.bytes === null) {
+      rmSync(snapshot.path, { force: true });
+      continue;
+    }
+    const temporary = `${snapshot.path}.${process.pid}.${Date.now()}.restore`;
+    writeFileSync(temporary, snapshot.bytes);
+    renameSync(temporary, snapshot.path);
+  }
+}
+
+/** 只识别 pnpm 明确报告的 modules/hoist major 不兼容，不把普通安装失败误判为迁移。 */
+function isPnpmCompatibilityFailure(output) {
+  return PNPM_COMPATIBILITY_ERRORS.some((marker) => output.includes(marker));
 }
 
 /**
@@ -138,7 +141,7 @@ function reconcileProfileBundles(profileDirectory, before, succeeded) {
 }
 
 function terminateProcessTree(child) {
-  if (child.exitCode !== null || child.pid === undefined) return;
+  if (child === null || child.exitCode !== null || child.pid === undefined) return;
   if (process.platform === "win32") {
     const killer = spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
       stdio: "ignore",
@@ -148,6 +151,117 @@ function terminateProcessTree(child) {
     return;
   }
   child.kill("SIGTERM");
+}
+
+/** 启动一次 DSH plugin 子进程，将输出转发给 Market，同时保留兼容错误判定所需的有限文本。 */
+function runPluginChild(args, invokingDirectory, environment, output, operation) {
+  return new Promise((resolve) => {
+    const node = requiredAbsolutePath("DSH_DESKTOP_NODE_EXECUTABLE");
+    const cli = requiredAbsolutePath("DSH_DESKTOP_CLI_ENTRY");
+    const child = spawn(node, [cli, "plugin", "--profile", PROFILE_NAME, ...args], {
+      cwd: invokingDirectory,
+      env: environment,
+      stdio: ["ignore", "pipe", "pipe"],
+      windowsHide: true,
+    });
+    operation.child = child;
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => {
+      stdout.push(Buffer.from(chunk));
+      output.stdout.write(chunk);
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr.push(Buffer.from(chunk));
+      output.stderr.write(chunk);
+    });
+    let settled = false;
+    const finish = (exitCode, closeSignal) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        exitCode,
+        signal: closeSignal,
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    };
+    child.once("error", (error) => {
+      output.stderr.write(`desktop runtime failed to start plugin command: ${error.message}\n`);
+      finish(127, null);
+    });
+    child.once("close", finish);
+  });
+}
+
+/**
+ * 执行固定 pnpm 10 操作；仅在 major 不兼容时重建一次，并对失败路径恢复控制文件与旧依赖树。
+ */
+async function runPluginTransaction(args, invokingDirectory, output, operation) {
+  const hostRoot = requiredAbsolutePath("DSH_DESKTOP_HOST_ROOT");
+  const profileDirectory = requiredAbsolutePath("DSH_DESKTOP_WEB_PROFILE");
+  const dshHome = requiredAbsolutePath("DSH_HOME");
+  const toolchain = join(hostRoot, "toolchains", FIXED_PNPM_DIRECTORY);
+  const environment = packageManagerEnvironment(process.env, toolchain);
+  const profileBefore = readProfileSnapshot(profileDirectory);
+  const controls = captureControlFiles(profileDirectory, dshHome);
+  const modules = join(profileDirectory, "node_modules");
+  const backup = join(profileDirectory, `.node_modules.dsh-desktop-backup.${process.pid}.${Date.now()}`);
+
+  let result = await runPluginChild(args, invokingDirectory, environment, output, operation);
+  const firstOutput = `${result.stderr}\n${result.stdout}`;
+  let dependencyTreeMoved = false;
+  if (!operation.cancelled && result.exitCode !== 0 && isPnpmCompatibilityFailure(firstOutput)) {
+    output.stderr.write("desktop runtime detected incompatible pnpm metadata; rebuilding once with pnpm 10\n");
+    restoreControlFiles(controls);
+    if (existsSync(modules)) {
+      renameSync(modules, backup);
+      dependencyTreeMoved = true;
+    }
+    const rebuild = await runPluginChild(
+      ["install", "--no-frozen-lockfile"],
+      invokingDirectory,
+      environment,
+      output,
+      operation,
+    );
+    if (!operation.cancelled && rebuild.exitCode === 0 && rebuild.signal === null) {
+      result = await runPluginChild(args, invokingDirectory, environment, output, operation);
+    } else {
+      result = rebuild;
+    }
+  }
+
+  const succeeded = result.exitCode === 0 && result.signal === null && !operation.cancelled;
+  if (succeeded) {
+    try {
+      reconcileProfileBundles(profileDirectory, profileBefore, true);
+    } catch (error) {
+      restoreControlFiles(controls);
+      if (dependencyTreeMoved) {
+        rmSync(modules, { recursive: true, force: true });
+        renameSync(backup, modules);
+      }
+      throw error;
+    }
+    if (dependencyTreeMoved) {
+      try {
+        rmSync(backup, { recursive: true, force: true });
+      } catch (error) {
+        output.stderr.write(`desktop runtime could not remove recovered dependency backup: ${error.message}\n`);
+      }
+    }
+  } else {
+    restoreControlFiles(controls);
+    if (dependencyTreeMoved) {
+      rmSync(modules, { recursive: true, force: true });
+      renameSync(backup, modules);
+    }
+    output.stderr.write(
+      "desktop runtime restored profile control files and dependency tree; third-party script side effects outside the profile are not transactional\n",
+    );
+  }
+  return { exitCode: succeeded ? 0 : result.exitCode, signal: result.signal };
 }
 
 /** 为 Market 启动一次受控的 dsh plugin 子进程，并锁住并发安装操作。 */
@@ -162,46 +276,29 @@ function runPlugin(args, invokingDirectory, signal) {
     throw new Error("desktop pnpm invoking directory must be absolute");
   }
 
-  const node = requiredAbsolutePath("DSH_DESKTOP_NODE_EXECUTABLE");
-  const cli = requiredAbsolutePath("DSH_DESKTOP_CLI_ENTRY");
-  const hostRoot = requiredAbsolutePath("DSH_DESKTOP_HOST_ROOT");
-  const profileDirectory = requiredAbsolutePath("DSH_DESKTOP_WEB_PROFILE");
-  const profileBefore = readProfileSnapshot(profileDirectory);
-  const major = profilePnpmMajor(profileDirectory);
-  const toolchain = join(hostRoot, "toolchains", `pnpm-${major}`);
-  const child = spawn(node, [cli, "plugin", "--profile", PROFILE_NAME, ...args], {
-    cwd: invokingDirectory,
-    env: packageManagerEnvironment(process.env, toolchain),
-    stdio: ["ignore", "pipe", "pipe"],
-    windowsHide: true,
-  });
-
-  let cancelled = false;
+  const stdout = new PassThrough();
+  const stderr = new PassThrough();
+  const operation = { child: null, cancelled: false };
   const cancel = () => {
-    if (cancelled) return;
-    cancelled = true;
-    terminateProcessTree(child);
+    if (operation.cancelled) return;
+    operation.cancelled = true;
+    terminateProcessTree(operation.child);
   };
   signal?.addEventListener("abort", cancel, { once: true });
-  const done = new Promise((resolve) => {
-    child.once("error", () => resolve({ exitCode: 127, signal: null }));
-    child.once("close", (exitCode, closeSignal) => {
-      let effectiveExitCode = exitCode;
-      try {
-        reconcileProfileBundles(profileDirectory, profileBefore, exitCode === 0 && closeSignal === null);
-      } catch (error) {
-        effectiveExitCode = 1;
-        console.error("desktop runtime failed to reconcile profile bundles", error);
-      }
-      resolve({ exitCode: effectiveExitCode, signal: closeSignal });
-    });
-  }).finally(() => {
-    signal?.removeEventListener("abort", cancel);
-    if (activeOperation?.child === child) activeOperation = null;
-  });
-
-  const handle = { stdout: child.stdout, stderr: child.stderr, done, cancel, child };
+  const handle = { stdout, stderr, done: null, cancel, child: null };
   activeOperation = handle;
+  handle.done = runPluginTransaction(args, invokingDirectory, { stdout, stderr }, operation)
+    .catch((error) => {
+      stderr.write(`desktop runtime plugin transaction failed: ${error.stack ?? error}\n`);
+      return { exitCode: 1, signal: null };
+    })
+    .finally(() => {
+      stdout.end();
+      stderr.end();
+    signal?.removeEventListener("abort", cancel);
+      if (activeOperation === handle) activeOperation = null;
+  });
+  Object.defineProperty(handle, "child", { get: () => operation.child });
   return handle;
 }
 
@@ -229,11 +326,12 @@ const inject = ["webServer", "webRuntime"];
 
 export {
   apply,
+  captureControlFiles,
+  isPnpmCompatibilityFailure,
   inject,
   packageManagerEnvironment,
-  profilePnpmMajor,
   readProfileSnapshot,
   reconcileProfileBundles,
+  restoreControlFiles,
   runPlugin,
-  selectPnpmMajor,
 };

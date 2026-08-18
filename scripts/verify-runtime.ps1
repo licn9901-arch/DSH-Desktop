@@ -13,6 +13,9 @@ else {
     $resourceRootPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $ResourceRoot))
 }
 $runtimeLock = Get-Content -LiteralPath (Join-Path $projectRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
+if ($runtimeLock.schemaVersion -ne 2) {
+    throw "Unsupported runtime lock schema: $($runtimeLock.schemaVersion)"
+}
 $nodeRoot = Join-Path $resourceRootPath 'node'
 $hostRoot = Join-Path $resourceRootPath 'host'
 $nodePath = Join-Path $nodeRoot 'node.exe'
@@ -42,11 +45,9 @@ $requiredFiles = @(
     (Join-Path $marketRoot 'cordis.patch.yml'),
     (Join-Path $pnpmRoot 'package.json'),
     (Join-Path $pnpmRoot 'LICENSE'),
-    (Join-Path $pnpmRoot 'bin\pnpm.mjs'),
+    (Join-Path $pnpmRoot 'bin\pnpm.cjs'),
     (Join-Path $hostRoot 'node_modules\.bin\pnpm.cmd'),
-    (Join-Path $hostRoot 'toolchains\pnpm-9\pnpm.cmd'),
     (Join-Path $hostRoot 'toolchains\pnpm-10\pnpm.cmd'),
-    (Join-Path $hostRoot 'toolchains\pnpm-11\pnpm.cmd'),
     $policyPath,
     (Join-Path $webRoot 'dist\index.html'),
     (Join-Path $webRoot 'LICENSE'),
@@ -122,14 +123,14 @@ if ($pnpmPackage.name -ne $runtimeLock.pnpm.package -or
 if ($pnpmPackage.engines.node -ne $runtimeLock.pnpm.nodeRange) {
     throw "Bundled pnpm Node compatibility mismatch: $($pnpmPackage.engines.node)"
 }
-foreach ($toolchain in $runtimeLock.pnpmToolchains) {
-    $entry = $hostLock['packages']['node_modules/' + $toolchain.package]
-    $packagePath = Join-Path $hostRoot ('node_modules\' + $toolchain.package + '\package.json')
-    $package = Get-Content -LiteralPath $packagePath -Raw | ConvertFrom-Json
-    if ($package.version -ne $toolchain.version -or
-        $entry['version'] -ne $toolchain.version -or
-        $entry['integrity'] -ne $toolchain.integrity) {
-        throw "Bundled $($toolchain.package) does not match runtime.lock.json."
+foreach ($forbidden in @(
+    (Join-Path $hostRoot 'node_modules\pnpm-9'),
+    (Join-Path $hostRoot 'node_modules\pnpm-10'),
+    (Join-Path $hostRoot 'toolchains\pnpm-9'),
+    (Join-Path $hostRoot 'toolchains\pnpm-11')
+)) {
+    if (Test-Path -LiteralPath $forbidden) {
+        throw "Legacy pnpm runtime must not be staged: $forbidden"
     }
 }
 

@@ -15,9 +15,14 @@ npm audit
 Push-Location runtime-host
 npm audit --omit=dev
 Pop-Location
+Push-Location plugin-runtime
+npm audit --omit=dev
+Pop-Location
 npm run coverage
 ```
 
 新增 Rust 类型、方法和关键分支应提供简体中文注释。提交前检查 `git diff --check` 与 staged 文件边界，不要提交 `target`、运行时暂存文件、日志、安装包缓存或本机绝对路径。
 
-修改运行时或打包流程后还应运行 `npm run stage:runtime`、`npm run verify:runtime` 和 Windows 冒烟测试。公开发布前必须在本机完成发布检查表，再推送 `v*` 标签并用 `gh release create --prerelease` 上传校验后的产物。
+修改运行时或打包流程后还应运行 `stage/verify:runtime`、`stage/verify:plugins`、`package/verify:payload`
+和 Windows 安装器冒烟。payload 灰度完成前，默认 `npm run build` 必须保持 legacy。公开发布前必须在本机
+完成发布检查表，再推送 `v*` 标签并用 `gh release create --prerelease` 上传校验后的产物。

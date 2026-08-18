@@ -10,6 +10,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use crate::lifecycle::HostController;
 use crate::logger::{log_app, log_error, log_file_path};
+use crate::navigation::is_external_browser_url;
 
 const MENU_OPEN: &str = "open-main";
 const MENU_RESTART: &str = "restart-host";
@@ -124,11 +125,16 @@ pub fn quit_application(app: &AppHandle) {
     app.exit(0);
 }
 
-/// 把外部 HTTP/HTTPS 地址交给 Windows 默认浏览器，不在 WebView 内加载。
-pub fn open_external_url(url: &url::Url) {
-    let _ = Command::new("rundll32.exe")
+/// 把通过二次白名单校验的外部 HTTP/HTTPS 地址交给 Windows 默认浏览器。
+pub fn open_external_url(url: &url::Url) -> Result<(), String> {
+    if !is_external_browser_url(url) {
+        return Err("refusing to open an internal or non-HTTP URL externally".to_owned());
+    }
+    Command::new("rundll32.exe")
         .args(["url.dll,FileProtocolHandler", url.as_str()])
-        .spawn();
+        .spawn()
+        .map(|_| ())
+        .map_err(|error| format!("could not open the system browser: {error}"))
 }
 
 /// 使用资源管理器定位日志文件，避免把日志内容暴露给 WebView。
@@ -147,7 +153,7 @@ fn show_about(app: &AppHandle) {
     let _ = app
         .dialog()
         .message(format!(
-            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6、DSH Market 1.9.0、pnpm 11.22.0\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skins 0.1.17、Hindsight 0.3.4、ModLens 3.16.7、Skills/MCP 0.2.3\n\n第三方插件与桌面应用拥有相同主机权限，目前没有签名验证、权限清单或进程级沙箱。",
+            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6、DSH Market 1.10.0、pnpm 10.34.5\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skins 0.1.17、Hindsight 0.3.4、ModLens 3.16.7、Skills/MCP 0.2.3\n\n第三方插件与桌面应用拥有相同主机权限，目前没有签名验证、权限清单或进程级沙箱。",
             app.package_info().version
         ))
         .title("关于 DeepSeek Harness Desktop")

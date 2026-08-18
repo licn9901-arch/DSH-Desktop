@@ -79,7 +79,7 @@ if (-not (Test-Path -LiteralPath $lockPath -PathType Leaf)) {
     throw "Plugin lock file is missing: $lockPath"
 }
 $pluginLock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
-if ($pluginLock.schemaVersion -ne 1) {
+if ($pluginLock.schemaVersion -ne 2) {
     throw "Unsupported plugin lock schema: $($pluginLock.schemaVersion)"
 }
 

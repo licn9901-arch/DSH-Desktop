@@ -1,0 +1,10 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/node/": "node/",
+      "resources/host/": "host/",
+      "resources/plugins/": "plugins/",
+      "resources/policy/": "policy/"
+    }
+  }
+}

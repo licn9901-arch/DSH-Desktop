@@ -3,6 +3,7 @@ param(
     [int]$TimeoutSeconds = 30,
     [switch]$UseBundledRuntime,
     [switch]$TestMarket,
+    [switch]$AllowCandidateFallbackError,
     [string]$DshHome,
     [ValidateSet('legacy', 'core-first', 'core-crash', 'plugins-never')]
     [string]$FakeHostScenario = 'legacy',
@@ -18,6 +19,7 @@ else {
     [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $Exe))
 }
 $fakeHostPath = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot 'fixtures\fake-host.js'))
+$runtimeLock = Get-Content -LiteralPath (Join-Path $PSScriptRoot '..\runtime.lock.json') -Raw | ConvertFrom-Json
 if (-not (Test-Path -LiteralPath $exePath -PathType Leaf)) {
     throw "Desktop executable not found: $exePath"
 }
@@ -30,7 +32,8 @@ $smokeRoot = Join-Path ([System.IO.Path]::GetTempPath()) ("dsh-desktop-smoke-" +
 $logDirectory = Join-Path $smokeRoot 'logs'
 $workingDirectory = Join-Path $smokeRoot 'workspace'
 $logPath = Join-Path $logDirectory 'dsh-desktop.log'
-New-Item -ItemType Directory -Force -Path $logDirectory, $workingDirectory | Out-Null
+$webviewDataDirectory = Join-Path $smokeRoot 'webview-data'
+New-Item -ItemType Directory -Force -Path $logDirectory, $workingDirectory, $webviewDataDirectory | Out-Null
 
 $previousEnvironment = @{
     DSH_HOME = $env:DSH_HOME
@@ -44,10 +47,12 @@ $previousEnvironment = @{
     DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS
     DSH_DESKTOP_FAKE_HOST_SCENARIO = $env:DSH_DESKTOP_FAKE_HOST_SCENARIO
     DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS = $env:DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS
+    DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR = $env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR
 }
 
 $desktopProcess = $null
 $hostProcessId = $null
+$hostStartsAtReady = $null
 $secondaryProcesses = @()
 $succeeded = $false
 
@@ -139,6 +144,7 @@ try {
     $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
     $env:DSH_DESKTOP_FAKE_HOST_SCENARIO = $FakeHostScenario
     $env:DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS = $FakePluginDelayMs.ToString()
+    $env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR = $webviewDataDirectory
 
     if ($TestMarket) {
         # 模拟由 pnpm 10 创建的已有 profile，防止未来再次把 JSON 元数据误判为新 profile。
@@ -147,7 +153,7 @@ try {
         [ordered]@{
             layoutVersion = 5
             nodeLinker = 'hoisted'
-            packageManager = 'pnpm@10.33.2'
+            packageManager = "pnpm@$($runtimeLock.pnpm.version)"
             storeDir = Join-Path $env:LOCALAPPDATA 'pnpm\store\v10'
             virtualStoreDir = Join-Path $modulesDirectory '.pnpm'
             virtualStoreDirMaxLength = 60
@@ -164,15 +170,19 @@ try {
         }
         if (Test-Path -LiteralPath $logPath) {
             $content = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
-            $pidMatch = [regex]::Match($content, 'host started: pid=(\d+)')
-            if ($pidMatch.Success) {
-                $hostProcessId = [int]$pidMatch.Groups[1].Value
+            $pidMatches = @([regex]::Matches($content, 'host started: pid=(\d+)'))
+            if ($pidMatches.Count -gt 0) {
+                $hostProcessId = [int]$pidMatches[-1].Groups[1].Value
             }
             if ($content -match 'phase=core_ready duration_ms=\d+ attempt=') {
+                $hostStartsAtReady = $pidMatches.Count
                 $ready = $true
                 break
             }
-            if ($content -match 'level=ERROR') {
+            $unexpectedErrors = @([regex]::Matches($content, '(?m)^.*level=ERROR.*$') | ForEach-Object { $_.Value } | Where-Object {
+                -not ($AllowCandidateFallbackError -and $_ -match 'runtime candidate failed validation; falling back to active runtime')
+            })
+            if ($unexpectedErrors.Count -gt 0) {
                 throw 'Desktop logged an error before readiness.'
             }
         }
@@ -180,6 +190,30 @@ try {
     }
     if (-not $ready -or -not $hostProcessId) {
         throw 'Timed out waiting for Host readiness and PID log.'
+    }
+    $expectedHostStarts = if ($AllowCandidateFallbackError) { 2 } else { 1 }
+    if ($hostStartsAtReady -ne $expectedHostStarts) {
+        throw "Unexpected Host start count at readiness: $hostStartsAtReady (expected $expectedHostStarts)."
+    }
+    if ($AllowCandidateFallbackError -and
+        $content -notmatch 'runtime candidate failed validation; falling back to active runtime') {
+        throw 'Candidate fallback smoke reached readiness without the expected rejection log.'
+    }
+
+    # WebView2 的内置启动页必须留在主 WebView；回归时这里曾错误拉起系统浏览器。
+    $navigationDeadline = (Get-Date).AddSeconds(5)
+    do {
+        $content = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
+        if ($content -match 'webview_navigation decision=allow scheme=https? host=tauri\.localhost port=- path=') {
+            break
+        }
+        Start-Sleep -Milliseconds 100
+    } while ((Get-Date) -lt $navigationDeadline)
+    if ($content -notmatch 'webview_navigation decision=allow scheme=https? host=tauri\.localhost port=- path=') {
+        throw 'Desktop smoke did not observe the internal tauri.localhost startup navigation.'
+    }
+    if ($content -match 'decision=external_browser scheme=https? host=tauri\.localhost(?:\s|$)') {
+        throw 'Desktop attempted to open tauri.localhost in the external browser.'
     }
 
     if ($TestMarket) {
@@ -202,7 +236,7 @@ try {
     }
     Start-Sleep -Milliseconds 300
     $content = Get-Content -LiteralPath $logPath -Raw
-    if ([regex]::Matches($content, 'host started: pid=').Count -ne 1) {
+    if ([regex]::Matches($content, 'host started: pid=').Count -ne $hostStartsAtReady) {
         throw 'Secondary launch created another Host.'
     }
     if ($content -notmatch 'secondary launch requested; focusing existing window') {

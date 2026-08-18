@@ -15,7 +15,7 @@ use sha2::{Digest, Sha256};
 
 use crate::runtime::RuntimePaths;
 
-const SUPPORTED_SCHEMA_VERSION: u32 = 1;
+const SUPPORTED_SCHEMA_VERSION: u32 = 2;
 const BASE_BUNDLE: &str = "@deepseek-ai/dsh-base";
 const WEB_APP_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 const MARKET_BUNDLE: &str = "dshmarket";
@@ -53,6 +53,26 @@ pub struct ManagedPlugin {
     pub source: PluginSource,
     #[serde(default)]
     pub required_files: Vec<String>,
+    #[serde(default)]
+    pub delivery: Option<PluginDelivery>,
+}
+
+/// 明确插件服务端、客户端、资产和运行时 external 的交付边界。
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct PluginDelivery {
+    #[serde(default)]
+    pub server_entries: Vec<String>,
+    #[serde(default)]
+    pub client_entries: Vec<String>,
+    #[serde(default)]
+    pub assets: Vec<String>,
+    #[serde(default)]
+    pub runtime_externals: Vec<String>,
+    #[serde(default)]
+    pub native_externals: Vec<String>,
+    #[serde(default)]
+    pub license_files: Vec<String>,
 }
 
 /// 描述插件构建输入的固定来源与完整性凭据。
@@ -178,6 +198,7 @@ pub struct PluginManager {
     legacy_market_root: PathBuf,
     user_home: PathBuf,
     linker: Arc<dyn DirectoryLinker>,
+    immutable_resources: bool,
 }
 
 /// 保存本次 profile 和链接变更；Host 就绪后提交，失败时恢复。
@@ -206,7 +227,7 @@ struct LinkChange {
 impl PluginManager {
     /// 从已解析的运行时路径创建生产环境插件管理器。
     pub fn new(paths: &RuntimePaths) -> Self {
-        Self::with_linker(
+        let mut manager = Self::with_linker(
             paths.plugins_root.clone(),
             paths.dsh_home.clone(),
             paths.web_profile.clone(),
@@ -216,7 +237,9 @@ impl PluginManager {
             Arc::new(SystemDirectoryLinker {
                 node: paths.node.clone(),
             }),
-        )
+        );
+        manager.immutable_resources = paths.immutable_plugins;
+        manager
     }
 
     /// 使用显式路径和链接实现创建管理器，供应用与测试共享。
@@ -239,6 +262,7 @@ impl PluginManager {
             legacy_market_root,
             user_home,
             linker,
+            immutable_resources: false,
         }
     }
 
@@ -251,12 +275,15 @@ impl PluginManager {
         let lock_bytes = fs::read(&lock_path)
             .map_err(|error| format!("failed to read {}: {error}", lock_path.display()))?;
         let lock = PluginLock::parse(&lock_bytes)?;
-        validate_plugin_tree(&self.resources.join("node_modules"), &lock)?;
-
         let digest = format!("{:x}", Sha256::digest(&lock_bytes));
-        let store = self.managed_plugins_root.join(&digest[..16]);
-        let store_modules = store.join("node_modules");
-        ensure_plugin_store(&self.resources, &store, &lock, &lock_bytes)?;
+        let store_modules = if self.immutable_resources {
+            self.resources.join("node_modules")
+        } else {
+            let store = self.managed_plugins_root.join(&digest[..16]);
+            let modules = store.join("node_modules");
+            ensure_plugin_store(&self.resources, &store, &lock, &lock_bytes)?;
+            modules
+        };
 
         let state_path = self.dsh_home.join("desktop-managed/plugins-state.json");
         let state = read_json_or_default::<PluginInstallState>(&state_path)?;
@@ -272,6 +299,10 @@ impl PluginManager {
                 linker: self.linker.clone(),
                 finalized: false,
             });
+        }
+        // immutable runtime 已在 provision 和 candidate 晋升时完整校验；仅在链接状态不匹配时重新复核。
+        if self.immutable_resources {
+            validate_plugin_tree(&store_modules, &lock)?;
         }
         let plan = plan_profile(profile.clone(), &state, &lock, &store_modules, &digest)?;
         let profile_changed = plan.profile != profile;
@@ -322,9 +353,10 @@ impl PluginManager {
                 };
                 let link = profile_modules.join(package_relative_path(package)?);
                 let current_target = self.linker.target(&link)?;
-                if current_target.as_ref().is_some_and(|target| {
-                    normalized_path(target) == normalized_path(Path::new(&previous.link_target))
-                }) {
+                if current_target
+                    .as_ref()
+                    .is_some_and(|target| paths_equal(target, Path::new(&previous.link_target)))
+                {
                     self.linker.remove(&link)?;
                     transaction.link_changes.push(LinkChange {
                         link,
@@ -340,7 +372,7 @@ impl PluginManager {
                 let previous_target = self.linker.target(&link)?;
                 if previous_target
                     .as_ref()
-                    .is_some_and(|value| value == &target)
+                    .is_some_and(|value| paths_equal(value, &target))
                 {
                     continue;
                 }
@@ -503,12 +535,16 @@ impl PluginManager {
                 || record.link_target != target_text
                 || dependencies.get(package).and_then(Value::as_str)
                     != Some(expected_dependency.as_str())
-                || self.linker.target(
-                    &self
-                        .web_profile
-                        .join("node_modules")
-                        .join(package_relative_path(package)?),
-                )? != Some(target)
+                || self
+                    .linker
+                    .target(
+                        &self
+                            .web_profile
+                            .join("node_modules")
+                            .join(package_relative_path(package)?),
+                    )?
+                    .as_ref()
+                    .is_none_or(|current| !paths_equal(current, &target))
                 || (should_be_bundle && bundles.contains(&package)) != record.bundle_enabled
             {
                 return Ok(false);
@@ -588,7 +624,7 @@ impl PluginManager {
             .unwrap_or_else(|_| self.bundled_market_root.clone());
         let points_to_bundled_market = previous_target
             .as_ref()
-            .is_some_and(|current| normalized_path(current) == normalized_path(&expected_target));
+            .is_some_and(|current| paths_equal(current, &expected_target));
 
         if desktop_managed {
             if !self.bundled_market_root.join("package.json").is_file() {
@@ -756,11 +792,11 @@ impl DirectoryLinker for SystemDirectoryLinker {
         if !is_directory_link(&metadata) {
             return Ok(None);
         }
-        match fs::canonicalize(link) {
+        match fs::read_link(link) {
             Ok(target) => Ok(Some(target)),
-            Err(canonical_error) => fs::read_link(link).map(Some).map_err(|read_error| {
+            Err(read_error) => fs::canonicalize(link).map(Some).map_err(|canonical_error| {
                 format!(
-                    "failed to resolve {}: {canonical_error}; read link failed: {read_error}",
+                    "failed to resolve {}: read link failed: {read_error}; canonicalize failed: {canonical_error}",
                     link.display()
                 )
             }),
@@ -799,6 +835,23 @@ fn validate_plugin_tree(node_modules: &Path, lock: &PluginLock) -> Result<(), St
                     "plugin {} required file is missing: {required}",
                     plugin.package
                 ));
+            }
+        }
+        if let Some(delivery) = &plugin.delivery {
+            for delivered in delivery
+                .server_entries
+                .iter()
+                .chain(&delivery.client_entries)
+                .chain(&delivery.assets)
+                .chain(&delivery.license_files)
+            {
+                let delivered_path = package_root.join(delivered);
+                if !delivered_path.is_file() && !delivered_path.is_dir() {
+                    return Err(format!(
+                        "plugin {} delivery file is missing: {delivered}",
+                        plugin.package
+                    ));
+                }
             }
         }
     }
@@ -1198,7 +1251,7 @@ impl PluginLock {
     pub fn parse(bytes: &[u8]) -> Result<Self, String> {
         let lock: Self = serde_json::from_slice(bytes)
             .map_err(|error| format!("invalid plugin lock JSON: {error}"))?;
-        if lock.schema_version != SUPPORTED_SCHEMA_VERSION {
+        if !matches!(lock.schema_version, 1 | SUPPORTED_SCHEMA_VERSION) {
             return Err(format!(
                 "unsupported plugin lock schema: {}",
                 lock.schema_version
@@ -1238,6 +1291,49 @@ impl PluginLock {
                         plugin.package
                     )
                 })?;
+            }
+            if lock.schema_version == SUPPORTED_SCHEMA_VERSION {
+                let delivery = plugin.delivery.as_ref().ok_or_else(|| {
+                    format!(
+                        "plugin {} is missing schema 2 delivery metadata",
+                        plugin.package
+                    )
+                })?;
+                if delivery.server_entries.is_empty()
+                    && delivery.client_entries.is_empty()
+                    && delivery.assets.is_empty()
+                {
+                    return Err(format!(
+                        "plugin {} delivery has no entries or assets",
+                        plugin.package
+                    ));
+                }
+                if delivery.license_files.is_empty() {
+                    return Err(format!(
+                        "plugin {} delivery has no license files",
+                        plugin.package
+                    ));
+                }
+                for path in delivery
+                    .server_entries
+                    .iter()
+                    .chain(&delivery.client_entries)
+                    .chain(&delivery.assets)
+                    .chain(&delivery.license_files)
+                {
+                    validate_relative_path(path).map_err(|error| {
+                        format!("plugin {} delivery path {path:?}: {error}", plugin.package)
+                    })?;
+                }
+                for package in delivery
+                    .runtime_externals
+                    .iter()
+                    .chain(&delivery.native_externals)
+                {
+                    validate_package_name(package).map_err(|error| {
+                        format!("plugin {} external {package:?}: {error}", plugin.package)
+                    })?;
+                }
             }
         }
         for dependency in &lock.transitive_packages {
@@ -1684,7 +1780,42 @@ fn package_relative_path(package: &str) -> Result<std::path::PathBuf, String> {
 
 /// 将路径转换成 pnpm/npm 可移植的 `link:` 表达形式。
 fn normalized_path(path: &Path) -> String {
-    path.to_string_lossy().replace('\\', "/")
+    let value = path.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let value = if let Some(rest) = value.strip_prefix(r"\\?\UNC\") {
+        format!(r"\\{rest}")
+    } else if let Some(rest) = value.strip_prefix(r"\\?\") {
+        rest.to_owned()
+    } else {
+        value
+    };
+    value.replace('\\', "/")
+}
+
+/// 按目标平台的路径语义比较链接目标，Windows 同时忽略 verbatim 前缀与 ASCII 大小写。
+fn paths_equal(left: &Path, right: &Path) -> bool {
+    let left = normalized_path(left);
+    let right = normalized_path(right);
+    #[cfg(windows)]
+    let directly_equal = left.eq_ignore_ascii_case(&right);
+    #[cfg(not(windows))]
+    let directly_equal = left == right;
+    if directly_equal {
+        return true;
+    }
+    let (Ok(left), Ok(right)) = (fs::canonicalize(left), fs::canonicalize(right)) else {
+        return false;
+    };
+    let left = normalized_path(&left);
+    let right = normalized_path(&right);
+    #[cfg(windows)]
+    {
+        left.eq_ignore_ascii_case(&right)
+    }
+    #[cfg(not(windows))]
+    {
+        left == right
+    }
 }
 
 /// 生成 profile dependency 使用的本地链接 spec。
@@ -1747,7 +1878,7 @@ mod tests {
               "schemaVersion": 1,
               "sharedPackages": ["@deepseek-ai", "react", "react-dom"],
               "plugins": [
-                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.7","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
+                {"package":"@dsh-desktop/runtime-services","version":"0.1.0-preview.8","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
@@ -1777,7 +1908,7 @@ mod tests {
 
     #[test]
     fn lock_rejects_unknown_schema_and_duplicate_packages() {
-        let schema = PluginLock::parse(br#"{"schemaVersion":2,"plugins":[]}"#).unwrap_err();
+        let schema = PluginLock::parse(br#"{"schemaVersion":3,"plugins":[]}"#).unwrap_err();
         assert!(schema.contains("schema"));
 
         let duplicate = PluginLock::parse(
@@ -1788,6 +1919,13 @@ mod tests {
         )
         .unwrap_err();
         assert!(duplicate.contains("duplicate package"));
+    }
+
+    #[test]
+    fn repository_plugin_lock_satisfies_schema_two_delivery_contract() {
+        let lock = PluginLock::parse(include_bytes!("../../plugins.lock.json")).unwrap();
+        assert_eq!(lock.schema_version, 2);
+        assert!(lock.plugins.iter().all(|plugin| plugin.delivery.is_some()));
     }
 
     #[test]
@@ -2384,7 +2522,7 @@ mod tests {
         );
         root.write(
             "runtime/host/node_modules/dshmarket/package.json",
-            br#"{"name":"dshmarket","version":"1.9.0"}"#,
+            br#"{"name":"dshmarket","version":"1.10.0"}"#,
         );
         root.write(
             "runtime/host/node_modules/dshmarket-desktop/package.json",
@@ -2442,7 +2580,7 @@ mod tests {
         );
         root.write(
             "runtime/host/node_modules/dshmarket/package.json",
-            br#"{"name":"dshmarket","version":"1.9.0"}"#,
+            br#"{"name":"dshmarket","version":"1.10.0"}"#,
         );
         root.write(
             "runtime/host/node_modules/dshmarket-desktop/package.json",
@@ -2494,6 +2632,30 @@ mod tests {
             .path()
             .join("home/.dsh/profiles/web/cordis.patch.yml")
             .exists());
+    }
+
+    #[test]
+    fn immutable_payload_links_directly_without_creating_a_second_store() {
+        let (root, mut manager, linker) = manager_fixture();
+        manager.immutable_resources = true;
+
+        let transaction = manager.prepare().unwrap();
+        let plugin_link = root
+            .path()
+            .join("home/.dsh/profiles/web/node_modules/dsh-better-sidebar");
+        assert_eq!(
+            linker.links.lock().unwrap().get(&plugin_link),
+            Some(
+                &root
+                    .path()
+                    .join("resources/plugins/node_modules/dsh-better-sidebar")
+            )
+        );
+        assert!(!root
+            .path()
+            .join("home/.dsh/profiles/node_modules/.dsh-desktop")
+            .exists());
+        transaction.rollback().unwrap();
     }
 
     #[test]
@@ -2714,6 +2876,35 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn repeated_production_prepare_reuses_healthy_junctions_without_spawning_node() {
+        let (_root, mut manager, _linker) = manager_fixture();
+        manager.immutable_resources = true;
+        manager.linker = Arc::new(super::SystemDirectoryLinker {
+            node: PathBuf::from("node.exe"),
+        });
+        manager.prepare().unwrap().commit().unwrap();
+
+        manager.linker = Arc::new(super::SystemDirectoryLinker {
+            node: PathBuf::from("definitely-missing-node.exe"),
+        });
+        manager.prepare().unwrap().commit().unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_link_targets_compare_by_win32_path_semantics() {
+        assert!(super::paths_equal(
+            Path::new(r"\\?\C:\Users\Example\runtime\plugins"),
+            Path::new(r"c:\users\example\runtime\plugins")
+        ));
+        assert_eq!(
+            super::normalized_path(Path::new(r"\\?\UNC\server\share\plugins")),
+            "//server/share/plugins"
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn production_linker_creates_a_real_windows_junction() {
         let root = TestDirectory::new("junction");
         let target = root.path().join("target");
@@ -2725,9 +2916,14 @@ mod tests {
         };
 
         linker.create(&link, &target).unwrap();
-        assert_eq!(
-            linker.target(&link).unwrap().unwrap(),
-            fs::canonicalize(&target).unwrap()
+        let resolved = linker.target(&link).unwrap().unwrap();
+        assert!(
+            super::paths_equal(&resolved, &target),
+            "resolved={} target={} normalized_resolved={} normalized_target={}",
+            resolved.display(),
+            target.display(),
+            super::normalized_path(&resolved),
+            super::normalized_path(&target)
         );
         linker.remove(&link).unwrap();
         assert!(target.is_dir());

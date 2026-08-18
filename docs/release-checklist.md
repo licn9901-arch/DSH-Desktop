@@ -1,37 +1,76 @@
 # 预览版发布检查表
 
-## 代码与依赖
+## Preview.8 验收记录
 
-- [ ] 版本号与标签一致，格式为 `v0.1.0-preview.7`。
-- [ ] `runtime.lock.json`、Node SHA-256、DSH、DSH Market 与 pnpm package lock 完全匹配。
-- [ ] `plugins.lock.json`、GitHub 归档 SHA-256、npm integrity 与插件 package lock 完全匹配。
-- [ ] staged 边界不包含 `resources`、`.runtime-cache`、`target`、日志、本机路径或安装包。
-- [ ] 主项目、`runtime-host` 与 `plugin-runtime` 三组 `npm audit` 通过。
+preview.8 第一轮公开 payload 门禁已通过：三组 audit 为 0 漏洞，核心行覆盖率 80.33%，两次强制构建资源
+逐项同 SHA，升级/回滚矩阵 4/4，通过 20 对 warm P95 门限。最终安装器为 97,299,624 字节，SHA-256
+`c16498e160cc94b73082edf249353d54e2b6a3129920a2587963815f7036ba5e`。preview.9 第二轮门禁和发布签名/标签仍待执行。
 
-## 自动化门禁
+## 版本与锁定输入
 
-- [ ] `cargo fmt --check`、Clippy `-D warnings`、`cargo test --locked` 通过。
-- [ ] 核心 Rust 库行覆盖率不低于 80%。
-- [ ] fake Host 冒烟验证就绪、单实例、关闭到托盘和显式退出。
-- [ ] fake Host 启动恢复验证核心先就绪、CoreReady 后崩溃、插件永不完成且最多重试一次。
-- [ ] 隔离的 pnpm 10 profile 通过 Market 完成 `dsh-pet` 安装与卸载，且不触碰真实 `$DSH_HOME`。
-- [ ] 安装器冒烟验证安装、内置运行时启动、生命周期、卸载和无残留进程。
-- [ ] NSIS 已按 digest 预置插件 store，卸载不删除该缓存或用户 profile。
-- [ ] 正式安装版热启动 20 次 CoreReady P95 不超过 8 秒，冷启动 3 次均不超过 20 秒。
-- [ ] 缺少任一内置运行时关键文件时构建失败。
-- [ ] 原始 `dshmarket@1.9.0` 客户端注册 ID 与活动 Cordis entry 一致，不存在桌面改名副本。
-- [ ] `dsh --profile web --dump-config --patch policy/dsh-market.patch.yml` 中 `dsh-market` 处于活动状态，且 `profile=web`、`allowRestart=false`。
-- [ ] 托盘重启后 PID 和动态端口更新，WebView 恢复且不误报旧 Host 异常退出。
-- [ ] 9 个托管 bundle、GenUI Skill、Skin Center、关键客户端资产和 Windows x64 PTY 缺少任一文件时构建失败。
-- [ ] “预置插件”只修改 web profile bundles；受保护和未知 bundle 均被拒绝，并发写不丢更新。
-- [ ] “主题”一级入口可列出皮肤，试穿、应用、恢复默认与重启持久化通过。
-- [ ] Hindsight 未 opt-in 时无请求，凭据不回显；ModLens 与 JSON-only Skills/MCP Manager 完成配置后可用。
-- [ ] 启动页无脚本错误，Canvas 非空且持续运动，1280x800 与 960x600 无文字或控件重叠。
+- [ ] 版本号与 `v*` 标签一致。
+- [ ] 目标仅为 Windows x64，Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`、pnpm `10.34.5`。
+- [ ] `runtime.lock.json` 与 `plugins.lock.json` 均为 schema 2，integrity、归档 SHA-256 和 package lock 匹配。
+- [ ] 每个插件的 delivery 入口、资产、runtime/native external 和许可证声明完整。
+- [ ] staged 边界不包含 resources、cache、target、日志、本机路径或安装包。
 
-## 发布产物
+## 静态、测试与审计
 
-- [ ] NSIS 安装包、`.sha256`、`third-party-licenses.json`、第三方声明和构建摘要齐全。
-- [ ] Release 标记为 prerelease，并明确社区非官方、Windows x64、内置版本和未签名提示。
-- [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动和任务测试。
-- [ ] 安装、升级、回滚和卸载均不删除 DSH 用户会话与配置。
-- [ ] 本机全部门禁通过后再创建 Git 标签和 GitHub prerelease，不依赖 GitHub Actions。
+- [ ] `npm run validate:icons`、`npm run lint`、`npm test` 通过。
+- [ ] 核心 Rust 行覆盖率不低于 80%。
+- [ ] `npm run audit:release` 的主项目、`runtime-host`、`plugin-runtime` 三组报告均为 0 total/high/critical。
+- [ ] pnpm 9/10/11 真实兼容矩阵确认所有操作最终使用唯一的 `pnpm@10.34.5`。
+- [ ] `verify:runtime`、`verify:plugins`、`verify:payload` 通过。
+- [ ] `git diff --check` 通过，发布范围中没有 cache、安装目录或 debug artifact。
+- [ ] 三方许可证与 NOTICE 覆盖 Node、Host、插件及新增 Rust/Node 构建依赖。
+
+## Payload 与预算
+
+- [ ] Tauri payload resources 只有 manifest、Node ZIP、Host ZIP、插件 ZIP 四个文件。
+- [ ] Node ZIP 只含 `node.exe` 和许可证；安装器不含 PDB、map、类型、测试或示例源码。
+- [ ] 三个 ZIP 展开总大小不超过 300 MiB，NSIS 安装包不超过 100 MiB。
+- [ ] 相对 47,418 个 legacy 安装资源文件减少至少 90%。
+- [ ] warm cache 重复打包不超过 10 分钟，冷暂存与打包不超过 20 分钟。
+- [ ] 同输入强制构建两次，三个 ZIP 与 manifest SHA-256 逐项一致。
+- [ ] `runtime-debug-symbols.zip` 独立生成，不参与默认安装器和 payload digest。
+
+## 功能与兼容事务
+
+- [ ] 固定 pnpm 10 完成 add/update/remove、`allowBuilds`、local link、tarball 和 git prepare fixture。
+- [ ] pnpm 9/10/11 历史 fixture 只在明确 modules/hoist 不兼容时重建一次、重试一次。
+- [ ] 失败后 package、lock、workspace、Cordis patch 与 bundle 状态字节一致，旧依赖树恢复。
+- [ ] 运行时不使用 `--force`、全局 pnpm、其他 major 或循环恢复。
+- [ ] 官方本地插件绝对 `.ts` 路径、函数/对象/类、`inject`、`ctx.effect()` 清理和 patch 顺序通过。
+- [ ] DSH Web、Market、9 个内置 bundle、用户插件、PTY、sharp、GenUI、Hindsight、ModLens、Skills/MCP 和主题通过。
+
+## Provision、安装与回滚
+
+- [ ] provision 在 Tauri/single-instance 前执行，只登记 candidate，不直接切换 active。
+- [ ] 路径穿越、ADS、设备名、大小写冲突、重复条目、symlink/reparse point、ZIP bomb 和截断 ZIP 均被拒绝。
+- [ ] 并发 provision、中断 staging、candidate 失败、状态写入失败和垃圾清理测试通过。
+- [ ] clean install、运行中升级、legacy 到 payload、连续 payload 升级与损坏资源矩阵通过。
+- [ ] candidate 只有真实 Host core/plugins readiness 与插件事务成功后才晋升 active。
+- [ ] 升级失败保持旧 active；新 exe 可运行 active 与 previous 两代 ABI。
+- [ ] 卸载始终删除桌面 runtime；仅勾选删除应用数据时删除其余 LocalAppData；永不删除 `~/.dsh`。
+- [ ] 安装器 smoke 在专用可丢弃 Windows 用户中运行，隔离 install/runtime/profile，且未污染真实 LocalAppData、HKCU 产品键或 Shell 快捷方式。
+
+## 生命周期与性能
+
+- [ ] fake Host 冒烟覆盖 readiness、单实例、关闭到托盘、显式退出和 Host PID 清理。
+- [ ] smoke 记录 `tauri.localhost` 为内部 allow，且没有该 host 的 `external_browser` 记录。
+- [ ] CoreReady 后崩溃、插件永不完成和恢复路径最多重试一次。
+- [ ] 正式 payload 安装器冒烟覆盖 candidate 晋升和 9 个内置 bundle readiness。
+- [ ] legacy 与 payload 使用相同 seed profile，预热后交替完成 20 对 warm 启动并记录 3 次 cold。
+- [ ] payload 启动 P95 劣化不超过 5% 或 100 ms，两者取较大值。
+
+## 灰度与发布
+
+- [ ] preview.7 安装器只作为固定 SHA-256 的 legacy 基线，不计作 payload preview。
+- [ ] preview.8 与 preview.9 均保留 `build:legacy`，并分别完成完整公开 payload 门禁。
+- [ ] preview.9 额外完成 preview.8 payload 到 preview.9 payload 的停止/运行中升级。
+- [ ] preview.8、preview.9 两轮通过后，preview.10 才把默认 build 切到 payload。
+- [ ] 默认切换后再经过一个稳定 preview，才删除 legacy 暂存路径。
+- [ ] 版本化原子产物目录包含 NSIS、`.sha256`、manifest、构建/审计/基准/升级报告、许可证和 debug symbols。
+- [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动。
+- [ ] Release 标为 prerelease，注明社区非官方、Windows x64、内置版本和签名状态。
+- [ ] 任一未完成项保持 legacy 发布，不通过放宽验收值推进。

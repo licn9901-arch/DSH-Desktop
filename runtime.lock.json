@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "node": {
     "version": "22.22.3",
     "platform": "win-x64",
@@ -16,28 +16,16 @@
   },
   "market": {
     "package": "dshmarket",
-    "version": "1.9.0",
-    "integrity": "sha512-WUeo31GkItN1V2P3Uo8IwMqLzApws7Sk7Q8/1zPMy5tgDCJG3SmZlfSNeG/2uzfygPmnAOI4hjZ6MAqC2k+IVw==",
+    "version": "1.10.0",
+    "integrity": "sha512-pfsFC8Oxg/Ju6ZzfaQqrkGpbbT2lHXzKc7fXjSj1isOZS4QD4J8Tup1pQqA44laA6akiff4pDPD4wlzOAN4duA==",
     "nodeRange": ">=22.13 <23",
     "bundlePatch": "node_modules/dshmarket/cordis.patch.yml"
   },
-  "pnpmToolchains": [
-    {
-      "package": "pnpm-9",
-      "version": "9.15.9",
-      "integrity": "sha512-aARhQYk8ZvrQHAeSMRKOmvuJ74fiaR1p5NQO7iKJiClf1GghgbrlW1hBjDolO95lpQXsfF+UA+zlzDzTfc8lMQ=="
-    },
-    {
-      "package": "pnpm-10",
-      "version": "10.33.2",
-      "integrity": "sha512-qQ+vb+6rca1sblf5Tg/hoS9dzCLNdU20CulZPraj4LaxLjVAIYuzeuCDQEsfLObbKkEh6XmCm0r/lLmfSdoc+A=="
-    }
-  ],
   "pnpm": {
     "package": "pnpm",
-    "version": "11.22.0",
-    "integrity": "sha512-H/hwxMYTPf2I+yr8Rt0T1H8JyXlLQ4xv20fKmMrzvBY4HuC+k6CRuOOCTPAfiJ9G19niCRD7C+GrD7W6qA3WIQ==",
-    "nodeRange": ">=22.13",
-    "cliEntry": "node_modules/pnpm/bin/pnpm.mjs"
+    "version": "10.34.5",
+    "integrity": "sha512-pO4F8vc2WCVb1qiYWcBlpFwopX2u+uLIk6Fo7itzFow3uR6D5X6mdlStA/AwMXRkMOi84442LgQmBfuKvIAZLg==",
+    "nodeRange": ">=18.12",
+    "cliEntry": "node_modules/pnpm/bin/pnpm.cjs"
   }
 }

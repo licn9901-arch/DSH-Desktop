@@ -25,11 +25,11 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.7` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.8` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
-`dshmarket 1.9.0` 与 `pnpm 11.22.0`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
+`dshmarket 1.10.0` 与 `pnpm 10.34.5`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
 或 DeepSeek 官方桌面端。
 
 ## 主要功能
@@ -45,7 +45,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.7` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.8` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -66,12 +66,13 @@
 GenUI 的锁定 `SKILL.md` 首次启动会写入 `$DSH_HOME/skills/genui/SKILL.md`，只作用于 DSH。
 已有非托管同名 Skill 不覆盖；托管文件未修改时会随版本升级，用户修改或删除后保留用户选择。
 
-DSH Market `1.9.0` 以原始包名作为桌面运行时 bundle 固定交付，不写入用户 profile dependencies，也不能由
+DSH Market `1.10.0` 以原始包名作为桌面运行时 bundle 固定交付，不写入用户 profile dependencies，也不能由
 市场升级或卸载。它使用 curated registry 搜索插件，并通过内置 DSH CLI 与私有 pnpm 在
 `~/.dsh/profiles/web` 安装、更新和卸载用户插件；离线可浏览内置快照，但安装、更新和可靠的版本检查需要网络。
-桌面端在 Market 前加载受保护的 Runtime Services，并按 profile 的 pnpm major 选择固定的 pnpm
-`9.15.9`、`10.33.2` 或 `11.22.0`；新 profile 默认使用 11，未知 major 会明确拒绝。旧版 pnpm
-仅为已有 profile 兼容保留，当前 npm audit 对 pnpm 9/10 报告无可用修复的高危公告。
+桌面端在 Market 前加载受保护的 Runtime Services，始终使用内置 pnpm `10.34.5`。只有 pnpm 明确报告
+历史 profile 的 modules/hoist major 不兼容时，才会按字节快照控制文件、原子备份旧依赖树、重建一次并
+重试原操作一次；失败恢复旧状态，不使用 `--force`、全局 pnpm 或其他 major。第三方安装脚本在 profile
+外产生的副作用不属于该事务边界。
 
 第三方插件与桌面应用拥有相同主机权限，目前没有包签名验证、权限清单或进程级沙箱。npm
 预构建包可以直接安装；需要 `prepare`、`allowBuilds` 等脚本的 GitHub 源必须逐包明确确认。
@@ -84,7 +85,7 @@ flowchart LR
     A["Desktop shell"] -->|"spawn fixed runtime + policy"| B["Bundled Node + dsh web"]
     M["DSH Market"] -->|"bundled dsh CLI + private pnpm"| U["User plugins in ~/.dsh"]
     U --> B
-    A -->|"atomic managed profile"| P["Pinned offline plugins"]
+    A -->|"junction from immutable runtime"| P["Pinned offline plugins"]
     P --> B
     B -->|"dsh web: loopback URL"| C["Strict readiness parser"]
     C -->|"same origin only"| D["WebView2"]
@@ -139,6 +140,19 @@ npm ci
 npm run build
 ```
 
+当前 `npm run build` 保持 legacy 打包，确保 payload 灰度期间可随时回退。payload preview 使用：
+
+```powershell
+npm run package:payload
+npm run verify:payload
+npm run build:payload
+```
+
+`preview.8` 和 `preview.9` 的默认 `build` 都必须保持 legacy；两轮公开 payload preview 的完整门禁通过后，
+`preview.10` 才允许切换默认 payload。preview.7 只作为固定 SHA-256 的 legacy 升级基线，不能计入 payload 灰度。
+preview.8 第一轮门禁已通过，最终 payload 安装器为 92.79 MiB，20 对安装版 warm P95 为 legacy 5,533 ms、
+payload 5,547 ms；preview.9 第二轮完成前默认构建不会切换。
+
 构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，以及 DSH、Market、pnpm 的 npm
 integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管 Skill
 归档与 npm integrity。三组固定 lockfile 分别执行 `npm ci`；插件组额外使用
@@ -147,7 +161,7 @@ integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管
 暂存资源写入被 Git 忽略的 `src-tauri/resources`，NSIS 安装包输出到
 `src-tauri/target/release/bundle/nsis`。
 
-Node Host 与内置插件预编译、依赖裁剪、单一 pnpm 10、ZIP payload 和快速 NSIS 的后续改造见
+Node Host 与内置插件预编译、依赖裁剪、单一 pnpm 10、ZIP payload、原子 provision 和灰度状态见
 [桌面运行时与安装包优化方案](docs/runtime-packaging-optimization.md)。
 
 已有缓存时可离线暂存：
@@ -173,7 +187,8 @@ Pop-Location
 npm run coverage
 npm run smoke
 npm run smoke:startup
-# 正式安装版基准：npm run benchmark:startup -- -Exe '<安装目录>\dsh-desktop.exe'
+# 完整 preview 门禁，安装器参数见 docs/testing.md
+npm run release:gate -- -LegacyInstaller '<preview.7 installer>' -PayloadInstaller '<current payload installer>'
 ```
 
 覆盖率门禁为 Host、运行时、生命周期、导航、日志和就绪解析核心模块行覆盖率不低于 80%；应用装配层由 Windows 冒烟覆盖。详细范围与流程见
@@ -197,8 +212,8 @@ npm run smoke:startup
 ## 更新与卸载
 
 首版不接入自动更新，请从 GitHub Releases 手动安装新版本。需要回滚时安装上一预览版本。
-卸载器只删除应用安装文件；即使选择删除应用数据，也只清理桌面壳的日志目录，
-不会删除 DSH 用户会话或配置。
+卸载器始终删除桌面托管 runtime；只有选择删除应用数据时才继续清理桌面壳日志等 LocalAppData。
+它不会删除 `~/.dsh`、DSH 用户会话、用户插件或业务配置。
 
 ## 当前边界
 

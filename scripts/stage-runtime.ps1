@@ -34,7 +34,7 @@ if (-not (Test-Path -LiteralPath $policySourcePath -PathType Leaf)) {
     throw "Desktop policy patch is missing: $policySourcePath"
 }
 $runtimeLock = Get-Content -LiteralPath $lockPath -Raw | ConvertFrom-Json
-if ($runtimeLock.schemaVersion -ne 1) {
+if ($runtimeLock.schemaVersion -ne 2) {
     throw "Unsupported runtime lock schema: $($runtimeLock.schemaVersion)"
 }
 
@@ -99,10 +99,11 @@ finally {
     Pop-Location
 }
 
-# 三套 shim 只改变本次 Market 子进程的 PATH，不修改 profile store 或用户全局 pnpm。
+# 唯一 shim 只改变本次 Market 子进程的 PATH，不修改 profile store 或用户全局 pnpm。
 $toolchainSource = Join-Path $runtimeHostRoot 'toolchains'
 $toolchainTarget = Assert-ProjectPath (Join-Path $hostResourceRoot 'toolchains')
-Copy-Item -LiteralPath $toolchainSource -Destination $toolchainTarget -Recurse
+New-Item -ItemType Directory -Force -Path $toolchainTarget | Out-Null
+Copy-Item -LiteralPath (Join-Path $toolchainSource 'pnpm-10') -Destination $toolchainTarget -Recurse
 
 Copy-Item -LiteralPath $lockPath -Destination (Join-Path $hostResourceRoot 'runtime.lock.json')
 Copy-Item -LiteralPath (Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md') -Destination $hostResourceRoot

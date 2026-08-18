@@ -1,6 +1,6 @@
 {
   "name": "@dsh-desktop/theme-settings",
-  "version": "0.1.0-preview.7",
+  "version": "0.1.0-preview.8",
   "description": "Desktop-owned settings for managed plugins, Hindsight project memory, and the upstream DSH Skin Center",
   "license": "MIT",
   "type": "module",

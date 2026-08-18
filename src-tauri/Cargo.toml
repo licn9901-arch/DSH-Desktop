@@ -1,6 +1,7 @@
 [package]
 name = "dsh-desktop"
-version = "0.1.0-preview.7"
+default-run = "dsh-desktop"
+version = "0.1.0-preview.8"
 description = "Tauri desktop shell for DeepSeek Harness"
 edition = "2021"
 
@@ -18,6 +19,21 @@ tauri = { version = "2", features = ["tray-icon"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-single-instance = "2"
 url = "2"
+fs2 = "0.4.3"
+zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2-zlib-rs"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
 [profile.release]
 strip = true
+
+# payload-tool 在开发 profile 中也承担正式 ZIP 压缩；只优化压缩热路径，避免冷打包耗时数分钟。
+[profile.dev.package.zip]
+opt-level = 3
+
+[profile.dev.package.flate2]
+opt-level = 3
+
+[profile.dev.package."zlib-rs"]
+opt-level = 3

@@ -1,0 +1,15 @@
+{
+  "bundle": {
+    "resources": {
+      "resources/payload/payload-manifest.json": "payload-manifest.json",
+      "resources/payload/node-runtime.zip": "node-runtime.zip",
+      "resources/payload/host-runtime.zip": "host-runtime.zip",
+      "resources/payload/builtin-plugins.zip": "builtin-plugins.zip"
+    },
+    "windows": {
+      "nsis": {
+        "compression": "none"
+      }
+    }
+  }
+}

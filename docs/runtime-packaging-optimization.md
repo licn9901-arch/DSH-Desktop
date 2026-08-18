@@ -1,283 +1,242 @@
-# 桌面运行时与安装包优化方案
+# 桌面运行时与安装包优化设计
 
-本文定义 DeepSeek Harness Desktop 自包含运行时的目标交付方式。方案解决两个相互关联的问题：
-构建阶段需要让 NSIS 遍历并压缩数万个小文件，以及桌面端为了兼容历史 profile 同时交付三套
-pnpm。本文是后续实现、测试和发布验收的唯一设计依据；完成相应阶段前，README 中描述的现有
-运行时结构仍然有效。
+本文是 DeepSeek Harness Desktop 的运行时交付、升级回滚和打包性能契约。实现基线固定为
+`@deepseek-ai/dsh@0.1.0-rc.6`（npm integrity 见 `runtime.lock.json`）、Node.js `22.22.3`、
+`dshmarket@1.10.0`、`pnpm@10.34.5` 和 Windows x64。上游概念说明固定参考 rc.6 发布 commit
+[`15148dbd` 的 DSH 官方基础文档](https://github.com/deepseek-ai/deepseek-harness/blob/15148dbd9a1d1f1ef1a26e5749b32af0cd663935/docs/user/develop/basic/index.md)，
+行为判定以锁定 npm 包的实际入口、配置和 loader smoke 为准，不跟随主分支文档漂移。
 
-## 现状与根因
+## 当前状态
 
-2026-08-17 对正式暂存资源的测量结果如下。大小是文件内容总和，不包含文件系统簇浪费。
+payload 链路已经实现，但仍处于 preview 验收阶段。`npm run build` 继续指向
+`build:legacy`；只有连续两个 payload preview 通过 clean install、legacy 升级、payload 升级和回滚门禁后，
+才允许切换默认构建。切换后还需一个稳定 preview，才能删除 legacy 暂存路径。
 
-| 资源 | 文件数 | 字节数 | 约合大小 |
-|---|---:|---:|---:|
-| Host | 35,956 | 344,045,447 | 328.1 MiB |
-| 内置插件 | 11,459 | 153,325,311 | 146.2 MiB |
-| Node.js | 3 | 87,118,892 | 83.1 MiB |
-| 合计 | 47,418 | 584,489,650 | 557.4 MiB |
+| 能力 | 当前状态 | 发布约束 |
+|---|---|---|
+| schema 2 runtime/plugin lock | 已实现 | 固定单一 pnpm 10，插件必须声明 `delivery` |
+| Host/插件裁剪与 debug 分离 | 已实现 | PDB/source map 不进入默认安装器 |
+| 三个确定性 ZIP 与 manifest | 已实现 | 每次缓存复用前重新校验 |
+| candidate/active/previous 状态机 | 已实现 | candidate 通过真实 readiness 后才能晋升 |
+| legacy 与 payload 双构建 | 已实现 | 默认仍为 legacy |
+| clean payload 安装器 smoke | 已实现并纳入门禁 | 使用隔离 runtime 根，不触碰真实 profile |
+| legacy/payload 连续升级矩阵 | preview.8 已通过 4/4，preview.9 待执行 | 两轮都通过前不得切换默认构建 |
+| 20 对交替启动 P95 | preview.8 已通过，preview.9 待执行 | 不得以单独 payload 样本替代相对 P95 |
+| `pnpm@10.34.5` 依赖审计 | 已通过 | 三组 audit 必须持续为 0 total/high/critical |
 
-当前 `stage-runtime.ps1` 和 `stage-plugins.ps1` 分别执行完整的生产依赖安装，再把 Host
-`node_modules`、插件依赖和 GitHub 源码归档展开到 `src-tauri/resources`。Tauri 随后为这些
-文件生成约 4.74 万条 NSIS `File` 指令，并使用 solid LZMA 再压缩。瓶颈不是最终安装包大小，
-而是深目录枚举、小文件读取、NSIS 脚本生成以及单流 solid LZMA 的重复压缩工作。
+## 目标与基线
 
-Host 中三套 pnpm 的当前占用如下：
+2026-08-17 的 legacy 正式暂存资源包含 47,418 个文件、584,489,650 字节（557.4 MiB）：
 
-| 运行时 | 文件数 | 字节数 |
+| 资源 | 文件数 | 字节数 |
 |---|---:|---:|
-| pnpm 9.15.9 | 902 | 17,420,406 |
-| pnpm 10.33.2 | 1,076 | 18,936,903 |
-| pnpm 11.22.0 | 891 | 38,187,995 |
+| Host | 35,956 | 344,045,447 |
+| 内置插件 | 11,459 | 153,325,311 |
+| Node.js | 3 | 87,118,892 |
 
-只保留 pnpm 10 可直接减少 1,793 个文件和约 53.0 MiB。三版本并不是 DSH CLI 或某个插件的
-运行要求：DSH CLI 最终调用 PATH 中的 `pnpm`，DSH Market 负责插件操作和已知错误恢复。
-真正需要处理的是不同 pnpm major 写入的 modules/hoist 元数据不兼容，而不是长期保留三套
-包管理器。
+payload 发布门禁如下：
 
-### 为什么插件不是前端项目的几 MiB
+- 默认安装包不超过 100 MiB，active runtime 不超过 300 MiB；
+- NSIS 安装资源固定为 manifest 与三个 ZIP，共 4 个文件，相对基线减少至少 90%；
+- warm cache 重复打包不超过 10 分钟，冷暂存与打包不超过 20 分钟；
+- 启动 P95 劣化不得超过 5% 或 100 ms，两者取较大值；
+- 默认安装器不包含 PDB、source map、声明文件、测试或示例源码；
+- 功能、回滚、体积或速度任一门禁失败时继续发布 legacy，不放宽阈值。
 
-当前 `@deepseek-ai/dsh-web-frontend` 本身约 4.41 MiB，前端项目的直觉没有错。问题在于桌面
-发布链路交付的不是前端 bundle，而是 Node Host、插件服务端入口、客户端 bundle、native 模块
-和完整生产依赖树的混合物。
+preview.8 最终 payload 为 12,897 个展开文件、239,303,045 字节（228.22 MiB），三个 ZIP 共
+84,702,330 字节（80.78 MiB），NSIS 安装器 97,299,624 字节（92.79 MiB），SHA-256 为
+`c16498e160cc94b73082edf249353d54e2b6a3129920a2587963815f7036ba5e`。两次强制完整构建分别为
+718,874 ms 与 695,754 ms，warm cache 完整构建为 225,946 ms；四个 payload 资源的 SHA-256 逐项一致，
+payload digest 为 `ea75cc9ff05bb557e5b53360dad42ac5c60dc50bba29d6f63b1fc54e3a4aa08b`。
 
-插件客户端其实已经有 bundle 产物。例如 Skills/MCP Manager 的 `lib/client.js` 已包含 Lucide
-代码，侧栏的 `client-editor.js` 和 `client-terminal.js` 已包含 CodeMirror、Xterm 等代码；但
-`npm ci` 仍会按插件的 `dependencies` 再安装这些包。`npm ci --omit=dev` 只跳过开发依赖，不会
-进行 tree-shaking、模块合并或删除发布包中的 map、类型和调试文件。
+preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902/5,533 ms，payload 为
+4,973/5,547 ms，门限为 5,810 ms；各 3 次 cold 为 legacy 17,278/16,902/17,827 ms、payload
+6,002/5,377/5,416 ms。公开 preview.7 仅是 SHA-256 为
+`e331e628b07bf574e823610324130c258d77ed1e57113b59426feed1a3a9d3d9` 的 legacy 基线，不能计作 payload 灰度。
 
-当前实现还有三个放大点：
+## 构建架构
 
-- [`stage-plugins.ps1`](../scripts/stage-plugins.ps1) 对 GitHub tarball 和本地插件使用递归复制，
-  不使用 lock 中的 `requiredFiles` 作为复制白名单；
-- `requiredFiles` 目前只在 [`plugins.rs`](../src-tauri/src/plugins.rs) 中做存在性校验，不能证明
-  未列出的文件不会进入安装包；
-- 安装启动准备会把整个 `resources/plugins/node_modules` 再物理复制到用户托管 store，然后通过
-  junction 挂载。安装目录、用户 store 和暂存目录因此会重复承载同一份小文件树。
+### 锁文件
 
-### 瘦身审计结果
+`runtime.lock.json` schema 2 只允许 Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`
+和 pnpm `10.34.5`。构建不得探测或调用全局 pnpm，也不得下载另一个 major。
 
-以下数据来自 2026-08-17 的 Windows x64 暂存资源。不同项存在重叠，不能直接相加；它们用于确定
-优先级，不是最终可节省量的承诺。
+原 `pnpm@10.33.2` pin 因 high advisories 被废止。批准的 `10.34.5` 使用 registry integrity
+`sha512-pO4F8vc2WCVb1qiYWcBlpFwopX2u+uLIk6Fo7itzFow3uR6D5X6mdlStA/AwMXRkMOi84442LgQmBfuKvIAZLg==`；
+主项目、runtime-host 和 plugin-runtime 三组 audit 当前均为 0 漏洞。每个 preview 仍必须重新执行 audit、
+历史 profile fixture、Market add/update/remove 和 payload 可复现性门禁，任何 residual advisory 都阻断发布。
 
-| 对象 | 当前占用 | 已确认的浪费或边界 |
-|---|---:|---|
-| `node-pty`（插件） | 61.38 MiB | 52.76 MiB 是 PDB；Windows x64 非 PDB 预编译文件约 2.45 MiB |
-| `lucide-react` | 27.25 MiB / 3,521 文件 | 客户端 bundle 已包含使用到的代码，生产依赖树仍完整交付 |
-| CodeMirror、Lezer、RxJS、Xterm | 14.60 MiB / 3,173 文件 | 侧栏客户端已内联，服务端入口不应带整套客户端依赖 |
-| Hindsight 通用依赖 | 6.69 MiB / 1,869 文件 | `dist/dsh.js` 的外部 import 主要是 Node 内置模块，其他 Agent 集成不属于 DSH 入口闭包 |
-| Host 与插件重复包 | 97 个包 / 76.64 MiB | 两次独立 `npm ci` 产生重复版本，需共享或编译进各自 bundle |
-| Host 非发布内容 | source map 42.43 MiB、类型 26.36 MiB、测试/源码路径 26.91 MiB | 这些数字有重叠；应生成独立 debug artifact，不能进入默认安装资源 |
+`plugins.lock.json` schema 2 的每个插件必须声明：
 
-`node-pty` 还带有 ARM64、Darwin、源码、测试和 `third_party` 内容；桌面发布只支持 Windows x64，
-因此应只保留按 `process.platform`/`process.arch` 实际加载的 native 闭包。Host 中同版本的
-`node-pty` 也应与侧栏共用一份，但共享必须通过明确的 runtime external/链接布局实现，不能简单
-删除插件目录后依赖 Node 的偶然搜索路径。
+- `serverEntries`：DSH/Cordis 服务端入口；
+- `clientEntries`：已编译客户端入口；
+- `assets`：patch、Skill、schema、图片等运行时资产；
+- `runtimeExternals`：Node 动态解析的 JavaScript 依赖；
+- `nativeExternals`：Windows x64 native addon；
+- `licenseFiles`：许可证或可追溯的包元数据。
 
-### 瘦身优先级
+`verify-plugins.ps1` 同时验证 `requiredFiles` 与 delivery 契约。缺少入口、资产、native 文件或许可证时
+构建失败，不能在运行时回退下载。
 
-1. 先生成“运行时依赖闭包”而不是复制 npm 包目录：分别产出 Host server、插件 server、客户端
-   bundle、native external、Skill/patch/assets 和许可证清单。
-2. 将已经编译进客户端 bundle 的 Lucide、CodeMirror、Lezer、RxJS、Xterm 等从生产依赖树移出；
-   如果服务端确实需要某个包，保留服务端最小入口并通过 import 追踪验证。
-3. 为 `node-pty` 做 Windows x64 专用裁剪：删除 PDB、ARM64/Darwin、源码、测试和未使用的第三方
-   构建文件；Host 与侧栏共用同一份 native external。
-4. Hindsight、ModLens 等插件按 DSH 入口单独打包，不能因为 npm 包同时发布其他 Agent/CLI 集成
-   就把那些入口一起带入桌面安装包。
-5. Host 按 esbuild metafile 和动态加载清单裁剪 map、声明文件、测试和多平台依赖；source map
-   只作为发布诊断附件，不进入安装器。
-6. 最后再启用 ZIP payload 和 NSIS `compression: none`，否则只是把未裁剪的依赖树换一种容器，
-   不能解决安装包体积和首次复制问题。
+### Host 与插件闭包
 
-阶段二的初始目标是：内置插件资源从 146.2 MiB 降到 40 MiB 以下、文件数降到 3,000 以下；
-目标必须在真实 Host 启动、侧栏终端、GenUI、Hindsight、ModLens 和 Skills/MCP smoke 通过后
-才算成立。这个目标不包含 Node.js 本体，也不包含用户通过 Market 安装的插件。
-
-## 架构决策
-
-### 预编译并裁剪 Node Host
-
-Node Host 使用 esbuild 按 Node.js 22、Windows x64、ESM 目标生成固定入口。构建结果包含可静态
-解析的 JavaScript 依赖；以下内容保留为 external，并随 Host 资源显式交付：
-
-- Node.js 内置模块；
-- `.node` 原生扩展及其运行时 DLL，例如 `node-pty`、`sharp`；
-- Cordis/DSH 按包名或配置动态加载的模块；
-- 运行时确实读取的模板、协议文件、许可证和静态资产。
-
-构建脚本必须输出 esbuild metafile 和 external 清单。暂存过程根据清单生成最小运行时目录，
-禁止用“删除所有 `.map`/`.d.ts`”一类无上下文规则直接裁剪。验证脚本从真实 CLI 入口启动 Host，
-覆盖 DSH Web、Market、PTY、图片处理和动态插件加载后，才允许新的 external 清单进入 lockfile。
-
-### 内置插件只交付发布内容
-
-每个 `plugins.lock.json` 条目增加交付描述，至少包含编译入口、运行时资产、native external 和
-许可证来源。npm 包使用其发布 fileset；GitHub 来源在受控构建目录中完成预编译，只复制下列内容：
-
-- `package.json` 中声明的运行入口和 DSH/Cordis manifest；
-- 编译后的 JavaScript、CSS 与必要图片；
-- 运行时需要的模板、patch、Skill 和许可证；
-- 经验证仍需动态解析的生产依赖和 Windows x64 原生文件。
-
-源码、测试、示例、开发配置、声明文件、source map、其他平台原生文件和完整 Git 仓库元数据不进入
-安装资源。`lucide-react`、`rxjs` 等公共纯 JavaScript 依赖优先编入各插件产物；无法安全编入时，
-才进入内置插件共享 external 目录。用户通过 Market 安装的插件仍位于用户 profile，其依赖树不与
-内置插件合并。
-
-### 用 ZIP payload 替代小文件资源
-
-资源包保持真实格式，不改名为 `.dll`。文件扩展名不会减少 I/O 或提高压缩效率，伪装为 DLL 还会
-混淆可执行模块与数据资源的校验、安全策略和故障诊断。
-
-发布构建只向 Tauri resources 交付以下四个文件：
+`stage-runtime.ps1` 和 `stage-plugins.ps1` 先在 `.runtime-cache` 的受控目录执行锁定安装，再向
+`src-tauri/resources` 暂存；不会直接在 Tauri resources 内执行 `npm ci`。Host 入口经固定版本
+esbuild 处理后仍位于：
 
 ```text
-payload/
-  payload-manifest.json
-  node-runtime.zip
-  host-runtime.zip
-  builtin-plugins.zip
+host/node_modules/@deepseek-ai/dsh/lib/bin.js
 ```
 
-`node-runtime.zip` 复用已校验的官方 Node.js ZIP；Host 与插件 ZIP 使用固定文件顺序、固定时间戳和
-Deflate level 6 生成，以保证相同输入得到相同 SHA-256。`payload-manifest.json` 至少包含：
+该路径保持 `import.meta.url`、DSH install anchor 和动态包名解析语义。Node 内置模块、Cordis 动态配置、
+用户插件、native addon 与运行时资产保持 external；esbuild metafile、delivery allowlist 和真实 loader
+smoke 共同约束闭包。
+
+裁剪规则只作用于已经证明不参与 Windows x64 运行的内容：PDB、map、类型、测试、示例、多平台 native
+文件和已内联客户端依赖。目录名 `doc/docs` 不作为删除依据，因为 npm 包可能把运行时代码放在同名目录。
+`node-pty` 与 `sharp` 在各自真实 Node 解析根下保留所需副本，不依赖 `NODE_PATH` 或偶然搜索顺序共享。
+
+PDB 和 source map 收集到独立的 `.deploy-artifacts/runtime-debug-symbols/*.zip`。默认安装器只包含运行时
+许可证和 NOTICE；debug artifact 不参与 payload digest。
+
+### 确定性 payload
+
+Tauri payload resources 固定为：
+
+```text
+payload-manifest.json
+node-runtime.zip
+host-runtime.zip
+builtin-plugins.zip
+```
+
+Node ZIP 只含 `node.exe` 与官方许可证，不原样交付官方归档的其他文件。三个 ZIP 按规范化相对路径排序、
+固定时间戳并使用 Deflate level 6。Rust `payload` 模块与 `payload-tool` 共享 ZIP、manifest、摘要和路径校验
+实现，避免构建期与运行期出现两套规则。
+
+manifest 固定记录 `schemaVersion`、`runtimeAbi`、`desktopVersion`、`payloadDigest`、Node/pnpm 版本、三个
+入口，以及每个 ZIP 的 SHA-256、压缩大小、展开大小和文件数。`payloadDigest` 按固定顺序对 schema、ABI
+和三个 ZIP SHA-256 计算。相同输入连续构建时，三个 ZIP 与 manifest 必须逐字节一致。
+
+缓存键覆盖两套运行时 lockfile、主 package lock、Cargo lock、构建脚本、payload 实现、目标平台以及
+Node/npm/esbuild/Rust 工具版本。命中缓存后必须先执行完整 `verify`，校验失败即放弃缓存。
+
+## pnpm 10 profile 兼容事务
+
+Runtime Services 是桌面与 Market 的包管理边界。每个用户发起的 add/update/remove 操作遵循：
+
+1. 首次操作前按原始字节快照 `package.json`、`pnpm-lock.yaml`、`pnpm-workspace.yaml`、profile 与全局
+   Cordis patch；bundle 状态包含在 profile manifest 快照内。
+2. 只使用内置 pnpm `10.34.5` 执行原操作，并关闭项目 `packageManager` 自动切换或下载其他版本。
+3. 仅当 pnpm 明确报告 modules 或 hoist major 不兼容时，恢复控制文件并将旧 `node_modules` 在同卷
+   原子改名为备份。
+4. 执行一次 `install --no-frozen-lockfile`，不使用 `--force`，成功后只重试原操作一次。
+5. 重建或重试失败时恢复全部控制文件与旧依赖树；不循环、不切换 major、不访问全局 pnpm。
+
+普通网络、解析、脚本或权限错误不会触发重建。事务保证只覆盖 profile 控制文件和依赖树；第三方安装
+脚本在 profile 外产生的副作用无法回滚，失败日志必须明确这个边界。
+
+## Provision 与启动状态机
+
+运行时根固定为 `%LOCALAPPDATA%\dsh-desktop\runtime`，状态只存于一个原子
+`runtime-state.json`：
 
 ```json
 {
   "schemaVersion": 1,
-  "payloadVersion": "<desktop-version>-<digest>",
-  "nodeVersion": "22.22.3",
-  "pnpmVersion": "10.33.2",
-  "artifacts": [
-    {
-      "id": "host",
-      "file": "host-runtime.zip",
-      "sha256": "<sha256>",
-      "size": 0,
-      "target": "host"
-    }
-  ]
+  "active": null,
+  "previous": null,
+  "candidate": { "payloadDigest": "...", "runtimeAbi": 1, "desktopVersion": "..." }
 }
 ```
 
-构建阶段逐包验证 SHA-256、未压缩大小、文件数量和必需入口。展开阶段拒绝绝对路径、`..`、符号链接、
-重复目标、超出 manifest 上限的文件数或未压缩大小，避免路径穿越和 ZIP bomb。
+`dsh-desktop.exe --provision-runtime` 在 Tauri 与 single-instance 初始化前执行，只完成校验、展开和 candidate
+登记。正式构建不接受任意 runtime 根覆盖；`--provision-test-mode` 与路径覆盖只供安装器隔离 smoke。
 
-### 原子化安装、升级和回滚
+Provision 使用 `runtime/.provision.lock` 跨进程串行化，展开到 `<digest>.staging.<pid>`，完整验证后同卷
+rename 为 `<digest>`。Windows ZIP 校验拒绝：
 
-桌面程序提供无窗口的 `--provision-runtime` 内部命令。NSIS 复制四个 payload 文件后调用该命令；
-开发构建或安装阶段未执行时，应用首次启动执行同一兜底路径。
+- 绝对路径、父级路径、UNC/device path、ADS；
+- 保留设备名、尾随点或空格；
+- 大小写冲突、重复目标；
+- symlink/reparse point、加密条目；
+- 超过 manifest 与全局上限的文件数或展开大小。
 
-```mermaid
-flowchart LR
-    A["校验 payload manifest 和 ZIP 摘要"] --> B["展开到 <digest>.staging"]
-    B --> C["校验入口、文件数和内容摘要"]
-    C --> D["同卷 rename 为 <digest>"]
-    D --> E["原子更新 active.json"]
-    E --> F["启动新运行时"]
-    C -->|"失败"| G["删除 staging，继续使用旧 active"]
-    F -->|"启动健康检查失败"| H["恢复 previous，记录回滚"]
+应用启动时优先准备 candidate 的不可变插件 junction，启动真实 Host 并等待 core/plugins readiness。成功后
+先原子晋升 active，再提交 profile 插件事务；状态或提交失败则回滚链接和状态。candidate 失败会被拒绝，
+应用继续使用旧 active。晋升后 `previous` 保留上一代，垃圾清理只删除未被 active、previous、candidate
+引用的 runtime。
+
+内置插件直接从不可变 runtime 的 `plugins/node_modules` 建立 profile junction，不再复制到第二个 managed
+store。用户通过 Market 安装的插件仍位于用户 profile，桌面不改变其 schema 和安装语义。
+
+runtime ABI 初始为 1。每个桌面版本必须兼容 active 和 previous 两代 ABI；升级 ABI 时至少发布一个同时
+支持旧、新 ABI 的过渡版本。
+
+## NSIS 与卸载
+
+`tauri.payload.conf.json` 只打入四个 payload 文件，并使用 `compression: "none"`，避免对 ZIP 再执行
+solid LZMA。升级的 PREINSTALL 先调用旧 exe 的 `--quit-existing` 并等待最多 10 秒，失败或超时会在覆盖文件前
+终止。POSTINSTALL 调用 provision：clean install 失败则安装失败；upgrade 失败保留旧 active，新 exe
+依靠 ABI 兼容继续运行。
+
+卸载始终删除桌面托管 runtime。只有用户勾选“删除应用数据”时才删除日志等其余 LocalAppData；任何情况
+都不删除 `~/.dsh`。安装器 smoke 的 runtime 根必须位于系统临时目录的固定前缀下，并在卸载前规范化校验，
+防止测试污染真实安装状态或把任意路径交给递归删除。
+
+## 命令与产物
+
+```powershell
+# 默认发布路径，验收完成前保持 legacy
+npm run build
+npm run build:legacy
+
+# payload 构建与独立验证
+npm run package:payload
+npm run verify:payload
+npm run build:payload
+
+# 当前 preview 的完整发布门禁
+npm run release:gate -- -LegacyInstaller '<preview.7>' -PayloadInstaller '<current payload>'
 ```
 
-运行时目录位于 `%LOCALAPPDATA%\dsh-desktop\runtime`，只保留 active 与 previous 两个完整版本。
-升级不得覆盖正在使用的目录。`active.json` 保存 payload digest、版本和路径；`previous.json` 只用于一次
-自动回滚。清理只删除不再被两个指针引用的桌面托管运行时，绝不删除 `~/.dsh`、用户插件、会话或配置。
+该命令必须在专用、可丢弃的 Windows 用户中运行。Tauri NSIS 的 HKCU 产品键和 Shell 快捷方式名不受
+`/D=` 或 `LOCALAPPDATA` 重定向影响；门禁会拒绝任何既有进程、产品键、自动启动项或快捷方式，并在
+测试结束时只清理由系统临时安装根拥有的 Shell 状态。
 
-NSIS 输入已经是压缩归档，因此将 `bundle.windows.nsis.compression` 固定为 `"none"`，避免再次执行
-solid LZMA。若安装包超过 100 MiB，只能通过裁剪依赖或调整 ZIP 内容解决，不得恢复多小时 LZMA 作为
-默认方案。Tauri 对 `none`、`zlib`、`bzip2` 和 `lzma` 的支持见
-[NSIS compression 配置](https://v2.tauri.app/reference/config/#nsiscompression)。
+`stage-payload.ps1` 使用按 cache key 的跨进程独占文件锁发布缓存，异常退出由系统释放句柄，避免并发构建
+互删或同时 rename 同一目录。缓存元数据记录缓存输入、复制、裁剪、bundle、loader smoke、ZIP/manifest 耗时及
+输入输出文件数和字节数；`build-payload.ps1` 另行生成 `.release-work/<version>/reports/payload-build-report.json`，记录
+完整的 Tauri/NSIS 分阶段耗时与安装器摘要。默认发布产物不包含 `payload-tool.exe`；该工具只作为 Cargo
+example 在构建期运行。
 
-## 固定 pnpm 10
+`write-release-artifacts.ps1` 先在 `.deploy-artifacts/<version>.staging.<pid>` 汇总安装器、SHA-256、manifest、
+构建/审计/兼容/可复现性/启动/升级报告、许可证和 debug symbols，交叉校验版本与摘要后再同卷 rename 为
+`.deploy-artifacts/<version>`。它不会清空共享的 debug symbols 或复用旧 preview summary。
 
-### 单版本边界
+## 测试与发布门禁
 
-桌面运行时精确固定 `pnpm@10.33.2`，不使用范围版本。实现完成后删除：
+实现级门禁包括：
 
-- `pnpm-9`、pnpm 11 依赖、integrity 和 lock 条目；
-- `SUPPORTED_PNPM_MAJORS`、`selectPnpmMajor`、`profilePnpmMajor`；
-- `toolchains/pnpm-9`、`toolchains/pnpm-11` 及多版本测试；
-- README、安装器 smoke 和第三方清单中的三版本描述。
+- runtime-services fixture：明确错误识别、字节快照、单次重建、重试失败恢复、PATH/Git 环境隔离；
+- payload 单测：摘要、截断 ZIP、ZIP bomb、路径穿越、ADS、大小写冲突、并发 provision、中断恢复、
+  state 晋升/回滚和垃圾清理；
+- 真实 loader/Host：DSH Web、9 个内置 bundle、PTY、sharp、GenUI、Hindsight、ModLens、Skills/MCP、主题；
+- 启动 fast path：Windows junction 使用 Win32 路径语义比较，健康 active 不重建链接；插件准备与 WebView2 初始化并行；
+- 安装器：clean install、candidate 晋升、single-instance、关闭到托盘、进程树退出、卸载 runtime 且保留
+  profile；
+- 构建：lint、Rust/Node 测试、80% 核心覆盖率、三组 npm audit、runtime/plugin/payload verify、
+  `git diff --check`。
 
-`runtime-services` 始终把唯一的内置 pnpm 10 shim 放在 Market 子进程 PATH 首位。不得回退到用户全局
-pnpm，不得在运行时下载另一个 major。新 profile 和空 profile 都由 pnpm 10 初始化。
+灰度顺序固定为：preview.8 是第一轮公开 payload，preview.9 重复全部门禁并增加 preview.8 到 preview.9
+的停止/运行中升级；两轮默认 build 均保持 legacy。两轮都通过后 preview.10 才切默认 payload，同时保留
+`build:legacy`。矩阵必须覆盖 candidate 启动失败、损坏资源与回滚，并在相同机器和防病毒状态下记录交替
+20 对 warm 与各 3 次 cold 启动。未完成项会阻止发布和默认构建切换。
 
-### 历史 profile 兼容
+## 不变量与非目标
 
-启动应用、读取 profile 和加载已有插件时不运行 pnpm，也不迁移 profile。只有用户主动安装、升级或
-删除插件时，才允许进入以下恢复流程：
-
-1. 使用固定 pnpm 10 执行原插件操作。
-2. 仅当输出包含 `ERR_PNPM_PUBLIC_HOIST_PATTERN_DIFF` 或 pnpm 明确报告 modules 目录由不兼容版本
-   创建时，进入一次兼容恢复。
-3. 在同一 profile 卷内将旧 `node_modules` 原子改名为恢复备份，并备份 `pnpm-lock.yaml`；不得修改
-   `package.json`、`pnpm-workspace.yaml`、Cordis 配置或 bundle 列表。
-4. 执行 `pnpm install --force --no-frozen-lockfile`。pnpm 10 官方文档明确说明 `--force` 会重建由
-   不兼容 pnpm 创建的 lockfile 或 modules 目录，见
-   [pnpm 10 install 文档](https://pnpm.io/10.x/cli/install#--force)。
-5. 重建成功后重试原操作一次；成功后删除恢复备份。
-6. 重建或重试失败时，删除新生成的依赖树，恢复旧 `node_modules` 和 lockfile，并返回原始命令、退出码、
-   已识别错误类型和日志位置。不得循环重试或切换 pnpm major。
-
-现有 DSH Market `withHoistRecovery` 已能识别 hoist pattern drift，但当前重建命令缺少 `--force`。
-删除 pnpm 9/11 前，必须先将 Market 命令层升级到上述事务式恢复实现并完成 fixture 验证；这是阶段一的
-发布门禁，不允许用 profile 启动迁移代替。
-
-## 分阶段实施
-
-### 阶段一：固定 pnpm 10
-
-- 先补 pnpm 9、10、11 profile fixture，锁定依赖声明和业务配置不变的断言。
-- 完成 Market 一次性恢复、失败还原和诊断日志，再删除 pnpm 9/11 与版本选择逻辑。
-- 更新 runtime lock、npm lock、许可证清单、安装器 smoke 和 README 当前版本说明。
-- 重新测量 Host 文件数与大小；预期至少减少 1,793 个文件和约 53 MiB。
-
-### 阶段二：Host 与内置插件预编译、裁剪
-
-- 引入可复现的 Host bundle、插件 bundle、metafile 和 external allowlist。
-- `stage-runtime.ps1` 与 `stage-plugins.ps1` 从完整依赖安装改为“受控构建目录安装，再复制发布闭包”。
-- `verify-runtime.ps1`、`verify-plugins.ps1` 校验真实入口、native 模块、资产、许可证和动态加载。
-- 对每个插件记录裁剪前后文件数、大小和功能 smoke；任何缺失运行时文件都阻止发布。
-
-### 阶段三：ZIP payload 与快速 NSIS
-
-- 生成三个确定性 ZIP 和 payload manifest，Tauri resources 不再包含原始 `node_modules` 树。
-- 实现 provision、active/previous 指针、失败清理和自动回滚。
-- 将 NSIS compression 固定为 `none`，安装器只处理四个 payload 文件和桌面程序自身文件。
-- 完成冷安装、覆盖升级、回滚、卸载和资源损坏测试后，移除旧的小文件暂存路径。
-
-每个阶段单独提交并可独立回退。阶段二不能绕过阶段一的 pnpm 兼容门禁；阶段三必须在阶段二的真实
-运行时 smoke 全部通过后启用。
-
-## 测试与验收
-
-### 功能与兼容性
-
-- pnpm 10 profile 可以完成 Market 安装、升级和删除，且始终使用内置 `10.33.2`。
-- pnpm 9/11 fixture 的首次插件操作只重建一次依赖树，操作成功后业务配置字节不变。
-- 恢复失败 fixture 能还原旧依赖树和 lockfile；不循环重试、不访问全局 pnpm。
-- Host、DSH Web、Market、9 个内置 bundle、用户 Market 插件、PTY、图片处理和 Skill 均通过真实入口 smoke。
-- 冷安装、覆盖升级、损坏 ZIP、摘要不匹配、展开中断和新运行时启动失败均能拒绝或回滚。
-- 卸载和失败恢复不得删除 `~/.dsh`、用户插件、会话或配置。
-
-### 性能指标
-
-| 指标 | 验收值 |
-|---|---:|
-| 相同 lock、warm cache 的重复打包 | 不超过 10 分钟 |
-| 已有下载缓存、清空暂存产物的冷暂存与打包 | 不超过 20 分钟 |
-| NSIS `File` 指令 | 不超过 100 条 |
-| 安装资源文件数 | 相对当前减少至少 90% |
-| NSIS 安装包 | 不超过 100 MiB |
-| 已安装版本启动耗时 P95 | 不劣于改造前基线 |
-
-网络下载时间不计入冷构建指标，但必须单独记录。构建日志分别输出依赖解析、Host bundle、插件 bundle、
-ZIP、Tauri 编译、NSIS 和 provision 耗时，以及各阶段输入/输出文件数与字节数。验收报告必须附相同机器、
-相同 lockfile、相同 Windows Defender 状态下的改造前后数据，不能只比较最终安装包大小。
-
-## 非目标与约束
-
-- 本方案不改变 DSH Web、Agent 能力、用户 profile schema 或插件业务配置。
-- 本方案不把用户插件预编译进桌面安装包，也不承诺插件安装离线可用。
-- 本方案不引入运行时静默下载、全局 pnpm、profile 启动迁移或第二套包管理器。
-- 依赖裁剪不能移除许可证、NOTICE、原生运行文件或动态加载所需资产。
-- ZIP 摘要保证构建产物完整性，不替代 Authenticode、插件签名或进程级沙箱。
+- 不修改 DSH Web、Agent、用户 profile schema、业务配置或 Market 用户插件安装语义；
+- 不把用户插件编入安装器，不增加运行时静默下载，不依赖全局 pnpm；
+- 不通过删除许可证、动态资产或 native 运行文件达成体积目标；
+- ZIP SHA-256 提供内容完整性，不替代 Authenticode、插件签名或进程沙箱；
+- profile 回滚是字节级保证，profile 外第三方脚本副作用不在事务范围内。

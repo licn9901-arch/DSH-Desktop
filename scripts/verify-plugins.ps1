@@ -27,6 +27,9 @@ if (-not (Test-Path -LiteralPath $digestPath -PathType Leaf) -or
 }
 
 $lock = Get-Content -LiteralPath $resourceLock -Raw | ConvertFrom-Json
+if ($lock.schemaVersion -ne 2) {
+    throw "Unsupported plugin lock schema: $($lock.schemaVersion)"
+}
 $expectedOrder = @(
     '@dsh-desktop/runtime-services',
     'dsh-at-file',
@@ -56,9 +59,33 @@ foreach ($marker in @('/api/desktop-managed-plugins', 'PROTECTED_BUNDLES', 'atom
     }
 }
 $runtimeServices = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\runtime-services\lib\index.js') -Raw
-foreach ($marker in @('ctx.provide("desktopProfiles"', 'ctx.provide("desktopPnpm"', 'dsh desktop-core:', 'unsupported profile pnpm major')) {
+foreach ($marker in @(
+    'ctx.provide("desktopProfiles"',
+    'ctx.provide("desktopPnpm"',
+    'dsh desktop-core:',
+    'FIXED_PNPM_DIRECTORY = "pnpm-10"',
+    'captureControlFiles',
+    'install", "--no-frozen-lockfile"'
+)) {
     if (-not $runtimeServices.Contains($marker)) {
         throw "Desktop Runtime Services is missing required marker: $marker"
+    }
+}
+
+foreach ($plugin in $lock.plugins) {
+    if ($null -eq $plugin.delivery) {
+        throw "Plugin delivery contract is missing: $($plugin.package)"
+    }
+    foreach ($relative in @(
+        $plugin.delivery.serverEntries +
+        $plugin.delivery.clientEntries +
+        $plugin.delivery.assets +
+        $plugin.delivery.licenseFiles
+    )) {
+        $delivered = Join-Path $resourceRootPath ('node_modules\' + $plugin.package.Replace('/', '\') + '\' + $relative.Replace('/', '\'))
+        if (-not (Test-Path -LiteralPath $delivered)) {
+            throw "Plugin delivery path is missing for $($plugin.package): $relative"
+        }
     }
 }
 
