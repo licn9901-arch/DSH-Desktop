@@ -2,6 +2,7 @@ param(
     [string]$Exe = '..\src-tauri\target\debug\dsh-desktop.exe',
     [int]$TimeoutSeconds = 30,
     [switch]$UseBundledRuntime,
+    [switch]$UseInstalledWebViewDataDirectory,
     [switch]$TestMarket,
     [switch]$AllowCandidateFallbackError,
     [string]$DshHome,
@@ -144,7 +145,13 @@ try {
     $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = [Math]::Max(10, $TimeoutSeconds).ToString()
     $env:DSH_DESKTOP_FAKE_HOST_SCENARIO = $FakeHostScenario
     $env:DSH_DESKTOP_FAKE_PLUGIN_DELAY_MS = $FakePluginDelayMs.ToString()
-    $env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR = $webviewDataDirectory
+    if ($UseInstalledWebViewDataDirectory) {
+        # 安装版位于隔离临时目录，使用其默认 WebView2 目录可避免显式 data directory 在新版 WebView2 下阻塞初始化。
+        Remove-Item Env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR -ErrorAction SilentlyContinue
+    }
+    else {
+        $env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR = $webviewDataDirectory
+    }
 
     if ($TestMarket) {
         # 模拟由 pnpm 10 创建的已有 profile，防止未来再次把 JSON 元数据误判为新 profile。
@@ -201,7 +208,8 @@ try {
     }
 
     # WebView2 的内置启动页必须留在主 WebView；回归时这里曾错误拉起系统浏览器。
-    $navigationDeadline = (Get-Date).AddSeconds(5)
+    $navigationTimeoutSeconds = [Math]::Min(60, [Math]::Max(5, $TimeoutSeconds))
+    $navigationDeadline = (Get-Date).AddSeconds($navigationTimeoutSeconds)
     do {
         $content = Get-Content -LiteralPath $logPath -Raw -ErrorAction Stop
         if ($content -match 'webview_navigation decision=allow scheme=https? host=tauri\.localhost port=- path=') {

@@ -257,6 +257,7 @@ try {
         Exe = $installedExe
         TimeoutSeconds = $TimeoutSeconds
         UseBundledRuntime = $true
+        UseInstalledWebViewDataDirectory = $true
         DshHome = $env:DSH_HOME
     }
     if (-not $SkipMarket) { $smokeArguments.TestMarket = $true }

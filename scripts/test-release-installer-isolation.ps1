@@ -75,4 +75,30 @@ if ((Get-DshDesktopReadyDuration -Content $legacyLog -AllowLegacyFormat) -ne 646
     throw 'Legacy readiness duration was not parsed after explicit opt-in.'
 }
 
+# 安装版 WebView2 数据目录随隔离安装根清理；当前 WebView2 对显式测试目录可能阻塞初始化。
+$smokeScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'smoke-test.ps1') -Raw
+$installerSmokeScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer-smoke.ps1') -Raw
+$upgradeMatrixScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'upgrade-matrix.ps1') -Raw
+$benchmarkScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'benchmark-compare.ps1') -Raw
+if ($smokeScript -notmatch '\[switch\]\$UseInstalledWebViewDataDirectory') {
+    throw 'Smoke test does not expose the installed WebView data-directory mode.'
+}
+if ($smokeScript -notmatch '\$navigationTimeoutSeconds\s*=\s*\[Math\]::Min\(60,') {
+    throw 'Smoke test does not allow the installed WebView startup up to 60 seconds.'
+}
+if ($installerSmokeScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$true') {
+    throw 'Installer smoke does not select the installed WebView data-directory mode.'
+}
+if ($upgradeMatrixScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$true') {
+    throw 'Upgrade matrix does not select the installed WebView data-directory mode.'
+}
+foreach ($releaseScript in @(
+    @{ Name = 'upgrade matrix'; Content = $upgradeMatrixScript },
+    @{ Name = 'startup benchmark'; Content = $benchmarkScript }
+)) {
+    if ($releaseScript.Content -match '\$env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR\s*=') {
+        throw "$($releaseScript.Name) still injects the WebView test data-directory override."
+    }
+}
+
 Write-Host 'INSTALLER ISOLATION TESTS OK'

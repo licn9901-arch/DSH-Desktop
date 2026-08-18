@@ -71,7 +71,8 @@ function Set-BenchmarkEnvironment {
     $env:DSH_DESKTOP_READY_TIMEOUT_SECS = $TimeoutSeconds.ToString()
     $env:DSH_DESKTOP_CORE_READY_TIMEOUT_SECS = $TimeoutSeconds.ToString()
     $env:DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS = $TimeoutSeconds.ToString()
-    $env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR = $Context.WebViewData
+    # 安装目录本身已隔离；默认 WebView2 数据目录会随临时安装目录一起清理。
+    Remove-Item Env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR -ErrorAction SilentlyContinue
 }
 
 # 返回当前隔离安装目录拥有的桌面进程，禁止按名称清理其他安装实例。
