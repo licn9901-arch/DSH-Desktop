@@ -8,7 +8,8 @@
 
 ## 当前状态
 
-payload 链路已经实现，但仍处于 preview 验收阶段。`npm run build` 继续指向
+payload 链路已经实现，但仍处于 preview 验收阶段。preview.8 已完成首轮公开门禁，preview.9 正在执行第二轮
+门禁。`npm run build` 继续指向
 `build:legacy`；只有连续两个 payload preview 通过 clean install、legacy 升级、payload 升级和回滚门禁后，
 才允许切换默认构建。切换后还需一个稳定 preview，才能删除 legacy 暂存路径。
 
@@ -48,6 +49,12 @@ preview.8 最终 payload 为 12,897 个展开文件、239,303,045 字节（228.2
 `c16498e160cc94b73082edf249353d54e2b6a3129920a2587963815f7036ba5e`。两次强制完整构建分别为
 718,874 ms 与 695,754 ms，warm cache 完整构建为 225,946 ms；四个 payload 资源的 SHA-256 逐项一致，
 payload digest 为 `ea75cc9ff05bb557e5b53360dad42ac5c60dc50bba29d6f63b1fc54e3a4aa08b`。
+
+在提交 `f76a7d7e81dcfa6f3f40e4ec20a630323f03a6ba` 上使用相同 exe 和四个 payload 资源执行 NSIS
+同输入 A/B：`compression: "none"` 为 97,299,624 字节，solid LZMA 为 82,941,995 字节，减少
+14,357,629 字节（13.693 MiB）。NSIS bundling 从 5,551 ms 增至 77,803 ms，仍远低于 warm cache
+10 分钟预算。该收益超过 10 MiB 采用阈值，因此 preview.9 改用 solid LZMA；最终 LZMA 安装器仍必须完成
+preview.9 全部门禁，不能复用 preview.8 的 `none` 安装器报告。
 
 preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902/5,533 ms，payload 为
 4,973/5,547 ms，门限为 5,810 ms；各 3 次 cold 为 legacy 17,278/16,902/17,827 ms、payload
@@ -175,8 +182,9 @@ runtime ABI 初始为 1。每个桌面版本必须兼容 active 和 previous 两
 
 ## NSIS 与卸载
 
-`tauri.payload.conf.json` 只打入四个 payload 文件，并使用 `compression: "none"`，避免对 ZIP 再执行
-solid LZMA。升级的 PREINSTALL 先调用旧 exe 的 `--quit-existing` 并等待最多 10 秒，失败或超时会在覆盖文件前
+`tauri.payload.conf.json` 只打入四个 payload 文件，并使用 `compression: "lzma"` 生成 solid LZMA
+安装器。该选择来自同输入 A/B 的 13.693 MiB 实测收益；三个内部 ZIP 的格式和 payload digest 不变。
+升级的 PREINSTALL 先调用旧 exe 的 `--quit-existing` 并等待最多 10 秒，失败或超时会在覆盖文件前
 终止。POSTINSTALL 调用 provision：clean install 失败则安装失败；upgrade 失败保留旧 active，新 exe
 依靠 ABI 兼容继续运行。
 

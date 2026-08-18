@@ -8,7 +8,7 @@
     },
     "windows": {
       "nsis": {
-        "compression": "none"
+        "compression": "lzma"
       }
     }
   }
