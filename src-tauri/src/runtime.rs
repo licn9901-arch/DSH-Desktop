@@ -7,7 +7,7 @@ use std::time::Duration;
 
 use crate::payload::{read_runtime_state, RuntimeSlot};
 
-const DEFAULT_CORE_READY_TIMEOUT: Duration = Duration::from_secs(15);
+const DEFAULT_CORE_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const CLI_RELATIVE_PATH: &str = "node_modules/@deepseek-ai/dsh/lib/bin.js";
 
@@ -361,7 +361,7 @@ impl RuntimeInputs {
             .unwrap_or_else(|| PathBuf::from(".dsh"))
     }
 
-    /// 解析核心就绪超时；旧变量作为兼容回退，默认 15 秒。
+    /// 解析核心就绪超时；旧变量作为兼容回退，默认 60 秒。
     fn resolve_core_ready_timeout(&self) -> Duration {
         parse_timeout(self.core_ready_timeout.as_ref())
             .or_else(|| parse_timeout(self.readiness_timeout.as_ref()))
@@ -501,6 +501,14 @@ mod tests {
         assert_eq!(resolved.working_directory, resources.path());
         assert_eq!(resolved.core_ready_timeout, DEFAULT_CORE_READY_TIMEOUT);
         assert_eq!(resolved.plugin_ready_timeout, DEFAULT_PLUGIN_READY_TIMEOUT);
+    }
+
+    #[test]
+    fn default_core_ready_timeout_allows_slow_cold_start() {
+        assert_eq!(
+            RuntimeInputs::default().resolve_core_ready_timeout(),
+            Duration::from_secs(60)
+        );
     }
 
     #[test]

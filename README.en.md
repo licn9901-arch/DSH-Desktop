@@ -116,7 +116,7 @@ Development builds support the following overrides. Release builds ignore Node a
 | `DSH_DESKTOP_CLI_ENTRY` | Development only: selects the DSH `lib/bin.js` entry point |
 | `DSH_DESKTOP_CWD` | Sets the Host working directory; defaults to the user's home directory |
 | `DSH_DESKTOP_USER_HOME` | Development only: overrides the third-party user configuration directory for isolated smoke tests |
-| `DSH_DESKTOP_CORE_READY_TIMEOUT_SECS` | Core page readiness timeout in seconds; defaults to 15 |
+| `DSH_DESKTOP_CORE_READY_TIMEOUT_SECS` | Core page readiness timeout in seconds; defaults to 60 |
 | `DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS` | All-plugins readiness timeout in seconds; defaults to 30 |
 | `DSH_DESKTOP_READY_TIMEOUT_SECS` | Legacy compatibility setting and fallback for both timeouts above |
 

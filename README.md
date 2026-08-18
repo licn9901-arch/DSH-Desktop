@@ -133,7 +133,7 @@ npm ci
 | `DSH_DESKTOP_CLI_ENTRY` | 仅开发模式：指定 DSH `lib/bin.js` |
 | `DSH_DESKTOP_CWD` | 指定 Host 工作目录，默认用户目录 |
 | `DSH_DESKTOP_USER_HOME` | 仅开发模式：覆盖第三方用户配置目录，供隔离 smoke 使用 |
-| `DSH_DESKTOP_CORE_READY_TIMEOUT_SECS` | 核心页面就绪超时秒数，默认 15 |
+| `DSH_DESKTOP_CORE_READY_TIMEOUT_SECS` | 核心页面就绪超时秒数，默认 60 |
 | `DSH_DESKTOP_PLUGIN_READY_TIMEOUT_SECS` | 全部插件完成超时秒数，默认 30 |
 | `DSH_DESKTOP_READY_TIMEOUT_SECS` | 兼容旧配置，同时作为上述两个超时的回退值 |
 

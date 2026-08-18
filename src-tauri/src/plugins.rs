@@ -810,8 +810,16 @@ impl DirectoryLinker for SystemDirectoryLinker {
 
     /// 删除链接入口，不递归触碰其目标目录。
     fn remove(&self, link: &Path) -> Result<(), String> {
-        if !link.exists() {
-            return Ok(());
+        let metadata = match fs::symlink_metadata(link) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(error) => return Err(format!("failed to inspect {}: {error}", link.display())),
+        };
+        if !is_directory_link(&metadata) {
+            return Err(format!(
+                "refusing to remove non-link plugin directory: {}",
+                link.display()
+            ));
         }
         fs::remove_dir(link)
             .map_err(|error| format!("failed to remove plugin link {}: {error}", link.display()))
@@ -2928,5 +2936,26 @@ mod tests {
         linker.remove(&link).unwrap();
         assert!(target.is_dir());
         assert!(!link.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn production_linker_removes_a_broken_windows_junction() {
+        let root = TestDirectory::new("broken-junction");
+        let target = root.path().join("target");
+        let link = root.path().join("profile/node_modules/plugin");
+        fs::create_dir_all(&target).unwrap();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        let linker = super::SystemDirectoryLinker {
+            node: PathBuf::from("node.exe"),
+        };
+
+        linker.create(&link, &target).unwrap();
+        fs::remove_dir_all(&target).unwrap();
+        assert!(!link.exists());
+        assert!(fs::symlink_metadata(&link).is_ok());
+
+        linker.remove(&link).unwrap();
+        assert!(fs::symlink_metadata(&link).is_err());
     }
 }
