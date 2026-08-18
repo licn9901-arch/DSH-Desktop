@@ -8,10 +8,9 @@
 
 ## 当前状态
 
-payload 链路已经实现，但仍处于 preview 验收阶段。preview.8 已完成首轮公开门禁，preview.9 正在执行第二轮
-门禁。`npm run build` 继续指向
-`build:legacy`；只有连续两个 payload preview 通过 clean install、legacy 升级、payload 升级和回滚门禁后，
-才允许切换默认构建。切换后还需一个稳定 preview，才能删除 legacy 暂存路径。
+payload 链路已经实现，并已由 preview.8、preview.9 连续完成两轮公开门禁。`npm run build` 在 preview.9
+继续指向 `build:legacy`；preview.10 才允许切换默认构建。切换后还需一个稳定 preview，才能删除 legacy
+暂存路径。
 
 | 能力 | 当前状态 | 发布约束 |
 |---|---|---|
@@ -21,8 +20,8 @@ payload 链路已经实现，但仍处于 preview 验收阶段。preview.8 已�
 | candidate/active/previous 状态机 | 已实现 | candidate 通过真实 readiness 后才能晋升 |
 | legacy 与 payload 双构建 | 已实现 | 默认仍为 legacy |
 | clean payload 安装器 smoke | 已实现并纳入门禁 | 使用隔离 runtime 根，不触碰真实 profile |
-| legacy/payload 连续升级矩阵 | preview.8 已通过 4/4，preview.9 待执行 | 两轮都通过前不得切换默认构建 |
-| 20 对交替启动 P95 | preview.8 已通过，preview.9 待执行 | 不得以单独 payload 样本替代相对 P95 |
+| legacy/payload 连续升级矩阵 | preview.8 已通过 4/4，preview.9 已通过 6/6 | preview.10 才允许切换默认构建 |
+| 20 对交替启动 P95 | preview.8、preview.9 均已通过 | 不得以单独 payload 样本替代相对 P95 |
 | `pnpm@10.34.5` 依赖审计 | 已通过 | 三组 audit 必须持续为 0 total/high/critical |
 
 ## 目标与基线
@@ -55,6 +54,14 @@ payload digest 为 `ea75cc9ff05bb557e5b53360dad42ac5c60dc50bba29d6f63b1fc54e3a4a
 14,357,629 字节（13.693 MiB）。NSIS bundling 从 5,551 ms 增至 77,803 ms，仍远低于 warm cache
 10 分钟预算。该收益超过 10 MiB 采用阈值，因此 preview.9 改用 solid LZMA；最终 LZMA 安装器仍必须完成
 preview.9 全部门禁，不能复用 preview.8 的 `none` 安装器报告。
+
+preview.9 最终 solid LZMA 安装器为 82,934,193 字节（79.09 MiB），SHA-256 为
+`12de9ab77e7af167534356cfa93e0aa887a363f0a4857505be40e422f83379c4`。payload 仍为 12,897 个展开文件、
+239,303,045 字节，三个 ZIP 共 84,702,328 字节；两次强制完整构建分别为 714,876 ms 与 729,395 ms，
+四个资源文件逐字节一致，payload digest 为
+`3502e8685c168414beb1da3855205f5d38dd234e4147563f361af0c635047848`。升级矩阵 6/6 通过；20 对安装版
+warm 启动中，legacy P50/P95 为 4,318/4,999 ms，payload 为 4,056/4,601 ms，门限为 5,249 ms；
+各 3 次 cold 为 legacy 16,509/16,000/16,130 ms、payload 5,306/5,207/4,647 ms。
 
 preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902/5,533 ms，payload 为
 4,973/5,547 ms，门限为 5,810 ms；各 3 次 cold 为 legacy 17,278/16,902/17,827 ms、payload

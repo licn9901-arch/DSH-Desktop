@@ -29,7 +29,7 @@ Project website: [https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 Download the latest `DeepSeek Harness Desktop_*_x64-setup.exe` from
 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) and run the installer. Preview builds support only Windows 10 22H2 and Windows 11 on x64.
 
-`v0.1.0-preview.8` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
+`v0.1.0-preview.9` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
 Before running the installer, verify it against the matching `.sha256` file on the Release page.
 
 The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
@@ -48,7 +48,7 @@ The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 
 ## Bundled Plugins
 
-`v0.1.0-preview.8` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
+`v0.1.0-preview.9` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
 
 | Plugin | Version | Default behavior and permissions |
 |---|---:|---|
@@ -135,7 +135,7 @@ npm run verify:payload
 npm run build:payload
 ```
 
-The default `build` command must remain on legacy for `preview.8` and `preview.9`. It may switch to payload in `preview.10` only after two public payload previews pass the complete release gate. Preview.7 is only the legacy upgrade baseline with a fixed SHA-256 and does not count toward payload rollout. Preview.8 passed the first complete gate: the final payload installer is 92.79 MiB, and 20 paired installed-build warm-start runs measured P95 at 5,533 ms for legacy and 5,547 ms for payload. The default build will not change before the second Preview.9 gate is complete.
+The default `build` command must remain on legacy for `preview.8` and `preview.9`. It may switch to payload in `preview.10` only after two public payload previews pass the complete release gate. Preview.7 is only the legacy upgrade baseline with a fixed SHA-256 and does not count toward payload rollout. Preview.8 passed the first complete gate: the final payload installer is 92.79 MiB, and 20 paired installed-build warm-start runs measured P95 at 5,533 ms for legacy and 5,547 ms for payload. Preview.9 also passed the complete second gate: its solid LZMA installer is 79.09 MiB, with warm P95 at 4,999 ms for legacy and 4,601 ms for payload. The default build remains on legacy through Preview.9 and may switch only in Preview.10.
 
 The build downloads and verifies the official Node archive plus the npm integrity values for DSH, Market, and pnpm according to `runtime.lock.json`. It also verifies the archives and npm integrity values for nine managed bundles and one managed Skill according to `plugins.lock.json`. Each of the three pinned lockfiles is installed independently with `npm ci`; the plugin group additionally uses `--omit=dev --ignore-scripts`. Tauri packaging begins only after Node, the DSH CLI, Web frontend, plugin-local assets, PTY, and licenses have all been verified.
 

@@ -29,7 +29,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.8` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.9` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -49,7 +49,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.8` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.9` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -155,7 +155,8 @@ npm run build:payload
 `preview.8` 和 `preview.9` 的默认 `build` 都必须保持 legacy；两轮公开 payload preview 的完整门禁通过后，
 `preview.10` 才允许切换默认 payload。preview.7 只作为固定 SHA-256 的 legacy 升级基线，不能计入 payload 灰度。
 preview.8 第一轮门禁已通过，最终 payload 安装器为 92.79 MiB，20 对安装版 warm P95 为 legacy 5,533 ms、
-payload 5,547 ms；preview.9 第二轮完成前默认构建不会切换。
+payload 5,547 ms。preview.9 第二轮门禁也已通过，solid LZMA 安装器为 79.09 MiB，warm P95 为
+legacy 4,999 ms、payload 4,601 ms；默认构建仍在 preview.9 保持 legacy，preview.10 才允许切换。
 
 构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，以及 DSH、Market、pnpm 的 npm
 integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管 Skill
