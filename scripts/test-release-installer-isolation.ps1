@@ -77,6 +77,7 @@ if ((Get-DshDesktopReadyDuration -Content $legacyLog -AllowLegacyFormat) -ne 646
 
 # 安装版 WebView2 数据目录随隔离安装根清理；当前 WebView2 对显式测试目录可能阻塞初始化。
 $smokeScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'smoke-test.ps1') -Raw
+$isolationScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-installer-isolation.ps1') -Raw
 $installerSmokeScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer-smoke.ps1') -Raw
 $upgradeMatrixScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'upgrade-matrix.ps1') -Raw
 $benchmarkScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'benchmark-compare.ps1') -Raw
@@ -92,6 +93,9 @@ if ($installerSmokeScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$tr
 if ($upgradeMatrixScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$true') {
     throw 'Upgrade matrix does not select the installed WebView data-directory mode.'
 }
+if (-not $isolationScript.Contains('"_?=$installRoot"')) {
+    throw 'Installer isolation helper does not fall back to direct NSIS uninstall mode.'
+}
 foreach ($releaseScript in @(
     @{ Name = 'installer smoke'; Content = $installerSmokeScript },
     @{ Name = 'upgrade matrix'; Content = $upgradeMatrixScript },
@@ -101,7 +105,7 @@ foreach ($releaseScript in @(
         throw "$($releaseScript.Name) still injects the WebView test data-directory override."
     }
     if ($releaseScript.Content -notmatch 'Invoke-DshSilentUninstall') {
-        throw "$($releaseScript.Name) does not use the bounded NSIS uninstall retry helper."
+        throw "$($releaseScript.Name) does not use the bounded NSIS uninstall helper."
     }
 }
 

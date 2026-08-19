@@ -127,7 +127,7 @@ function Assert-DshInstallerTestRoots {
     }
 }
 
-# 在 CI/Job 环境中 NSIS 首次自复制进程可能被宿主提前回收；只有退出码为 0 且目标完全无进展时重试一次。
+# 先验证 NSIS 默认自复制卸载；若 CI/Job 回收了子进程，则用 _?= 在当前进程完成同一卸载逻辑。
 function Invoke-DshSilentUninstall {
     param(
         [Parameter(Mandatory = $true)][string]$Uninstaller,
@@ -136,13 +136,21 @@ function Invoke-DshSilentUninstall {
     )
     if ($CompletionPaths.Count -eq 0) { throw 'Silent uninstall requires at least one completion path.' }
 
+    $installRoot = [System.IO.Path]::GetDirectoryName([System.IO.Path]::GetFullPath($Uninstaller))
     foreach ($attempt in 1..2) {
         if (-not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
             if (@($CompletionPaths | Where-Object { Test-Path -LiteralPath $_ }).Count -eq 0) { return }
             throw "Uninstaller disappeared before cleanup completed: $Uninstaller"
         }
 
-        $process = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -PassThru
+        $arguments = if ($attempt -eq 1) {
+            @('/S')
+        }
+        else {
+            # _?= 必须是最后一个参数；NSIS 会跳过临时自复制，父进程因而能可靠等待卸载完成。
+            @('/S', "_?=$installRoot")
+        }
+        $process = Start-Process -FilePath $Uninstaller -ArgumentList $arguments -PassThru
         if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
             Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
             throw "Silent uninstall timed out on attempt ${attempt}: $Uninstaller"
@@ -159,12 +167,12 @@ function Invoke-DshSilentUninstall {
         } while ((Get-Date) -lt $deadline)
 
         if ($attempt -eq 1) {
-            Write-Warning "Silent uninstall returned success without cleanup progress; retrying once: $Uninstaller"
+            Write-Warning "Silent uninstall child made no cleanup progress; retrying in direct NSIS mode: $Uninstaller"
         }
     }
 
     $remaining = @($CompletionPaths | Where-Object { Test-Path -LiteralPath $_ })
-    throw "Silent uninstall left managed paths after two attempts: $($remaining -join '; ')"
+    throw "Silent uninstall left managed paths after default and direct attempts: $($remaining -join '; ')"
 }
 
 # 清理由干净测试用户中的安装器场景创建的固定 Shell 状态；遇到非本轮目标时立即拒绝删除。
