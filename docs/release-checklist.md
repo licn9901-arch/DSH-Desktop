@@ -11,7 +11,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 ## 版本与锁定输入
 
 - [ ] 版本号与 `v*` 标签一致。
-- [ ] 目标仅为 Windows x64，Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`、pnpm `10.34.5`。
+- [ ] Windows 目标为 x64，Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`、pnpm `10.34.5`。
 - [ ] `runtime.lock.json` 与 `plugins.lock.json` 均为 schema 2，integrity、归档 SHA-256 和 package lock 匹配。
 - [ ] 每个插件的 delivery 入口、资产、runtime/native external 和许可证声明完整。
 - [ ] staged 边界不包含 resources、cache、target、日志、本机路径或安装包。
@@ -76,3 +76,15 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动。
 - [ ] Release 标为 prerelease，注明社区非官方、Windows x64、内置版本和签名状态。
 - [ ] 任一未完成项保持 legacy 发布，不通过放宽验收值推进。
+
+## macOS Apple Silicon
+
+- [ ] `runtime.macos.lock.json` 仅声明 `darwin-arm64`，Node 版本与 Windows lock 一致，官方归档 SHA-256 匹配。
+- [ ] Windows `npm run build`、`build:payload`、NSIS target 与 `release:gate` 未被 Mac 配置覆盖。
+- [ ] `npm run release:gate:macos` 的 lint、Rust/Node 测试、核心 80% 行覆盖率和三组零漏洞 audit 通过。
+- [ ] 两次全量暂存得到相同资源摘要，Host 与插件侧 PTY、sharp、lightningcss 等 Darwin 原生模块真实加载通过。
+- [ ] 资源中没有测试、示例、map、类型声明、其他平台 PTY prebuild 或重复客户端依赖。
+- [ ] `.app` 不超过 600 MiB、DMG 不超过 300 MiB，codesign 深度校验与 `hdiutil verify` 通过。
+- [ ] 隔离 profile 的正式 `.app` 达到 CoreReady/PluginsReady，`--quit-existing` 后桌面和 Host PID 均结束。
+- [ ] Release 明确标注 macOS 13+、Apple Silicon、ad-hoc 签名、未 notarize、内置版本与 SHA-256。
+- [ ] workflow 只上传成功门禁原子生成的 `.release-work/macos/gated`，不存在直接上传 `target` 产物的路径。

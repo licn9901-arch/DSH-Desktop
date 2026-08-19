@@ -240,17 +240,23 @@ mod tests {
 
     #[test]
     fn provision_defaults_to_executable_directory_and_managed_root() {
+        let executable = if cfg!(windows) {
+            Path::new(r"C:\app\dsh-desktop.exe")
+        } else {
+            Path::new("/Applications/DeepSeek Harness Desktop.app/Contents/MacOS/dsh-desktop")
+        };
+        let expected_resources = executable.parent().unwrap();
         let parsed = parse_provision_arguments(
             [
                 OsString::from("dsh-desktop.exe"),
                 OsString::from("--provision-runtime"),
             ],
-            Path::new(r"C:\app\dsh-desktop.exe"),
+            executable,
             Path::new(r"C:\runtime"),
         )
         .unwrap()
         .unwrap();
-        assert_eq!(parsed.resources, Path::new(r"C:\app"));
+        assert_eq!(parsed.resources, expected_resources);
         assert_eq!(parsed.runtime_root, Path::new(r"C:\runtime"));
     }
 

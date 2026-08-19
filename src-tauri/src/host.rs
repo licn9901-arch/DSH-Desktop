@@ -8,6 +8,8 @@ use std::process::{Child, ChildStderr, ChildStdout, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
 
@@ -70,8 +72,10 @@ trait ProcessTreeTerminator {
     fn force(&self, pid: u32) -> Result<(), String>;
 }
 
+#[cfg(windows)]
 struct WindowsProcessTreeTerminator;
 
+#[cfg(windows)]
 impl ProcessTreeTerminator for WindowsProcessTreeTerminator {
     fn request(&self, pid: u32) -> Result<(), String> {
         run_taskkill(pid, false)
@@ -79,6 +83,20 @@ impl ProcessTreeTerminator for WindowsProcessTreeTerminator {
 
     fn force(&self, pid: u32) -> Result<(), String> {
         run_taskkill(pid, true)
+    }
+}
+
+#[cfg(unix)]
+struct UnixProcessTreeTerminator;
+
+#[cfg(unix)]
+impl ProcessTreeTerminator for UnixProcessTreeTerminator {
+    fn request(&self, pid: u32) -> Result<(), String> {
+        signal_process_group(pid, libc::SIGTERM)
+    }
+
+    fn force(&self, pid: u32) -> Result<(), String> {
+        signal_process_group(pid, libc::SIGKILL)
     }
 }
 
@@ -138,6 +156,7 @@ impl HostSupervisor {
             }
         }
         hide_console_window(&mut command);
+        configure_process_group(&mut command);
 
         let mut child = command
             .spawn()
@@ -182,8 +201,12 @@ impl HostSupervisor {
 
     /// 终止 Host 进程树并回收子进程；重复调用不会产生额外副作用。
     pub fn shutdown(&self) {
+        #[cfg(windows)]
+        let terminator = WindowsProcessTreeTerminator;
+        #[cfg(unix)]
+        let terminator = UnixProcessTreeTerminator;
         self.shutdown_with(
-            &WindowsProcessTreeTerminator,
+            &terminator,
             Duration::from_secs(5),
             Duration::from_millis(100),
         );
@@ -191,7 +214,11 @@ impl HostSupervisor {
 
     /// 启动恢复时立即强制结束当前记录的进程树，避免等待已失效 Host 的优雅退出窗口。
     pub fn shutdown_for_recovery(&self) {
-        self.shutdown_for_recovery_with(&WindowsProcessTreeTerminator);
+        #[cfg(windows)]
+        let terminator = WindowsProcessTreeTerminator;
+        #[cfg(unix)]
+        let terminator = UnixProcessTreeTerminator;
+        self.shutdown_for_recovery_with(&terminator);
     }
 
     /// 注入进程树终止器执行恢复清理，供单元测试确认只处理记录 PID。
@@ -321,6 +348,7 @@ fn build_host_path(paths: &RuntimePaths, inherited: Option<&OsStr>) -> Result<Os
 }
 
 /// 调用 Windows `taskkill` 处理指定 PID 的完整进程树，并保留失败诊断。
+#[cfg(windows)]
 fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
     let pid_text = pid.to_string();
     let mut killer = Command::new("taskkill");
@@ -350,6 +378,26 @@ fn run_taskkill(pid: u32, force: bool) -> Result<(), String> {
     ))
 }
 
+/// 向应用创建的 Unix 进程组发送信号，避免 Host 的子进程在桌面退出后残留。
+#[cfg(unix)]
+fn signal_process_group(pid: u32, signal: i32) -> Result<(), String> {
+    let process_group = i32::try_from(pid)
+        .map_err(|_| format!("host pid is outside the Unix process id range: {pid}"))?;
+    // SAFETY: `process_group` 来自当前应用已启动并持有的子进程 PID；负值只选择该 PID 对应的进程组。
+    let result = unsafe { libc::kill(-process_group, signal) };
+    if result == 0 {
+        return Ok(());
+    }
+    let error = io::Error::last_os_error();
+    if error.raw_os_error() == Some(libc::ESRCH) {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to signal host process group {pid} with signal {signal}: {error}"
+        ))
+    }
+}
+
 /// 防止 Windows GUI 应用启动控制台子进程时弹出黑色窗口。
 #[cfg(windows)]
 fn hide_console_window(command: &mut Command) {
@@ -358,6 +406,14 @@ fn hide_console_window(command: &mut Command) {
 
 #[cfg(not(windows))]
 fn hide_console_window(_command: &mut Command) {}
+
+#[cfg(unix)]
+fn configure_process_group(command: &mut Command) {
+    command.process_group(0);
+}
+
+#[cfg(windows)]
+fn configure_process_group(_command: &mut Command) {}
 
 #[cfg(test)]
 mod tests {
@@ -368,6 +424,8 @@ mod tests {
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
+    #[cfg(unix)]
+    use super::signal_process_group;
     use super::{
         build_host_path, hindsight_token_from_credentials, HostSupervisor, ManagedChild,
         ProcessTreeTerminator,
@@ -532,16 +590,41 @@ mod tests {
         assert!(forced.load(Ordering::SeqCst));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn unix_process_group_rejects_pid_outside_signed_range() {
+        let error = signal_process_group(u32::MAX, libc::SIGTERM).unwrap_err();
+        assert!(error.contains("outside the Unix process id range"));
+    }
+
     #[test]
     fn host_path_prefers_bundled_node_and_pnpm_before_inherited_path() {
+        let app_root = if cfg!(windows) {
+            std::path::PathBuf::from(r"C:\app")
+        } else {
+            std::path::PathBuf::from("/app")
+        };
+        let inherited_directories = if cfg!(windows) {
+            vec![
+                std::path::PathBuf::from(r"C:\Windows\System32"),
+                std::path::PathBuf::from(r"C:\tools"),
+            ]
+        } else {
+            vec![
+                std::path::PathBuf::from("/usr/bin"),
+                std::path::PathBuf::from("/opt/tools/bin"),
+            ]
+        };
         let paths = RuntimePaths {
-            node: std::path::PathBuf::from(r"C:\app\node\node.exe"),
-            cli_entry: std::path::PathBuf::from(
-                r"C:\app\host\node_modules\@deepseek-ai\dsh\lib\bin.js",
-            ),
-            host_root: std::path::PathBuf::from(r"C:\app\host"),
-            tool_bin_directory: std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
-            desktop_policy_patch: std::path::PathBuf::from(r"C:\app\policy\dsh-market.patch.yml"),
+            node: app_root.join(if cfg!(windows) {
+                "node/node.exe"
+            } else {
+                "node/node"
+            }),
+            cli_entry: app_root.join("host/node_modules/@deepseek-ai/dsh/lib/bin.js"),
+            host_root: app_root.join("host"),
+            tool_bin_directory: app_root.join("host/node_modules/.bin"),
+            desktop_policy_patch: app_root.join("policy/dsh-market.patch.yml"),
             plugins_root: std::env::temp_dir(),
             user_home: std::env::temp_dir(),
             dsh_home: std::env::temp_dir(),
@@ -553,22 +636,19 @@ mod tests {
             immutable_plugins: false,
             activation: None,
         };
-        let inherited = std::env::join_paths([
-            std::path::Path::new(r"C:\Windows\System32"),
-            std::path::Path::new(r"C:\tools"),
-        ])
-        .unwrap();
+        let inherited = std::env::join_paths(&inherited_directories).unwrap();
 
         let actual = build_host_path(&paths, Some(&inherited)).unwrap();
         let directories = std::env::split_paths(&actual).collect::<Vec<_>>();
         assert_eq!(
             directories,
-            vec![
-                std::path::PathBuf::from(r"C:\app\node"),
-                std::path::PathBuf::from(r"C:\app\host\node_modules\.bin"),
-                std::path::PathBuf::from(r"C:\Windows\System32"),
-                std::path::PathBuf::from(r"C:\tools")
+            [
+                app_root.join("node"),
+                app_root.join("host/node_modules/.bin"),
             ]
+            .into_iter()
+            .chain(inherited_directories)
+            .collect::<Vec<_>>()
         );
     }
 

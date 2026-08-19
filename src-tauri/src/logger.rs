@@ -40,10 +40,22 @@ pub fn log_file_path() -> PathBuf {
         let _ = fs::create_dir_all(&directory);
         return directory.join("dsh-desktop.log");
     }
-    let base = env::var("LOCALAPPDATA")
-        .or_else(|_| env::var("TEMP"))
-        .unwrap_or_else(|_| ".".into());
-    let dir = Path::new(&base).join("dsh-desktop");
+    #[cfg(windows)]
+    let dir = {
+        let base = env::var("LOCALAPPDATA")
+            .or_else(|_| env::var("TEMP"))
+            .unwrap_or_else(|_| ".".into());
+        Path::new(&base).join("dsh-desktop")
+    };
+    #[cfg(target_os = "macos")]
+    let dir = env::var("HOME")
+        .map(|home| Path::new(&home).join("Library/Logs/dsh-desktop"))
+        .unwrap_or_else(|_| env::temp_dir().join("dsh-desktop"));
+    #[cfg(all(unix, not(target_os = "macos")))]
+    let dir = env::var("XDG_STATE_HOME")
+        .map(|base| Path::new(&base).join("dsh-desktop"))
+        .or_else(|_| env::var("HOME").map(|home| Path::new(&home).join(".local/state/dsh-desktop")))
+        .unwrap_or_else(|_| env::temp_dir().join("dsh-desktop"));
     let _ = fs::create_dir_all(&dir);
     dir.join("dsh-desktop.log")
 }

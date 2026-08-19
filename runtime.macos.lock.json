@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "platform": "darwin-arm64",
+  "minimumSystemVersion": "13.0",
+  "node": {
+    "version": "22.22.3",
+    "archive": "node-v22.22.3-darwin-arm64.tar.gz",
+    "url": "https://nodejs.org/dist/v22.22.3/node-v22.22.3-darwin-arm64.tar.gz",
+    "sha256": "0da7ff74ef8611328c8212f17943368713a2ad953fb7d89a8c8a0eae87c23207"
+  },
+  "budgets": {
+    "appBytes": 629145600,
+    "dmgBytes": 314572800
+  }
+}

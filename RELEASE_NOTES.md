@@ -4,6 +4,9 @@
 
 ## 本版内容
 
+- 新增实验性的 macOS 13+ Apple Silicon 自包含 DMG，内置与 Windows 相同版本的 Node、DSH、Market、pnpm 和托管插件。
+- Mac 使用独立锁文件、Tauri 配置和发布门禁；Windows 默认 payload 构建、NSIS 与安装器门禁保持不变。
+- Mac DMG 只有在 lint、测试、80% 覆盖率、三组零漏洞 audit、两次资源闭包一致、原生模块加载、签名/DMG 校验和真实生命周期冒烟全部通过后才生成发布目录。
 - 默认 `npm run build` 在连续两轮公开 payload 门禁通过后切换到确定性 payload 构建；legacy 构建链继续保留，供回归和升级验证使用。
 - 主题中心升级为独立的 `@linxin666/dsh-client-ui-skin-center@0.2.2`，单包交付全部内置皮肤，不再安装已退役的 `dsh-skins` 聚合载具。
 - 发布构建会把设置页画廊预览确定性缩放为最大 480px 的调色板 PNG；主题运行时使用的原始背景资产保持不变。
@@ -18,6 +21,7 @@
 ## 安装提示
 
 - 支持 Windows 10 22H2 / Windows 11 x64。
+- Mac 预览支持 macOS 13+ Apple Silicon；采用 ad-hoc 签名且未 Apple notarize，Intel Mac 暂不支持。
 - 安装包没有 Authenticode 签名，SmartScreen 可能显示未知发布者。
-- 请先核对随 Release 提供的 `.sha256` 文件。
+- 请先核对随 Release 提供的 `.sha256` 文件；Mac 同时核对 `release-gate-macos.json`。
 - 卸载不会删除 DSH 用户会话、profile、插件状态、Skill 或第三方配置。

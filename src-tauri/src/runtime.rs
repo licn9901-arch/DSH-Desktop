@@ -10,6 +10,10 @@ use crate::payload::{read_runtime_state, RuntimeSlot};
 const DEFAULT_CORE_READY_TIMEOUT: Duration = Duration::from_secs(60);
 const DEFAULT_PLUGIN_READY_TIMEOUT: Duration = Duration::from_secs(30);
 const CLI_RELATIVE_PATH: &str = "node_modules/@deepseek-ai/dsh/lib/bin.js";
+#[cfg(windows)]
+const NODE_EXECUTABLE: &str = "node.exe";
+#[cfg(not(windows))]
+const NODE_EXECUTABLE: &str = "node";
 
 /// 启动 Host 所需的全部已解析路径与超时配置。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -61,11 +65,34 @@ impl RuntimePaths {
 
 /// 返回当前用户桌面托管 runtime 根目录；正常启动不接受 release 环境覆盖。
 pub fn default_runtime_root() -> Result<PathBuf, String> {
+    platform_runtime_root()
+}
+
+#[cfg(windows)]
+fn platform_runtime_root() -> Result<PathBuf, String> {
     let local_app_data = non_empty_env("LOCALAPPDATA")
         .ok_or_else(|| "LOCALAPPDATA is not available for the managed runtime".to_owned())?;
     Ok(PathBuf::from(local_app_data)
         .join("dsh-desktop")
         .join("runtime"))
+}
+
+#[cfg(target_os = "macos")]
+fn platform_runtime_root() -> Result<PathBuf, String> {
+    let home = non_empty_env("HOME")
+        .ok_or_else(|| "HOME is not available for the managed runtime".to_owned())?;
+    Ok(PathBuf::from(home).join("Library/Application Support/dsh-desktop/runtime"))
+}
+
+#[cfg(all(unix, not(target_os = "macos")))]
+fn platform_runtime_root() -> Result<PathBuf, String> {
+    let base = non_empty_env("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| non_empty_env("HOME").map(|home| PathBuf::from(home).join(".local/share")))
+        .ok_or_else(|| {
+            "XDG_DATA_HOME and HOME are unavailable for the managed runtime".to_owned()
+        })?;
+    Ok(base.join("dsh-desktop/runtime"))
 }
 
 /// 返回安装器 smoke 专用的 WebView2 数据目录；正常发布启动不读取任意目录覆盖。
@@ -269,13 +296,13 @@ impl RuntimeInputs {
                 return Ok(PathBuf::from(value));
             }
         }
-        let bundled = resource_dir.join("node/node.exe");
+        let bundled = resource_dir.join("node").join(NODE_EXECUTABLE);
         if bundled.is_file() {
             return Ok(bundled);
         }
         if allow_development_fallbacks {
             return Ok(self
-                .find_in_path("node.exe")
+                .find_in_path(NODE_EXECUTABLE)
                 .unwrap_or_else(|| PathBuf::from("node")));
         }
         Err(format!(
@@ -315,7 +342,7 @@ impl RuntimeInputs {
                 PathBuf::from(r"C:\Program Files\DeepSeek Harness\resources\host")
                     .join(CLI_RELATIVE_PATH),
             ];
-        if let Some(node) = self.find_in_path("node.exe") {
+        if let Some(node) = self.find_in_path(NODE_EXECUTABLE) {
             if let Some(directory) = node.parent() {
                 candidates.push(directory.join(CLI_RELATIVE_PATH));
             }
@@ -421,9 +448,11 @@ mod tests {
     use std::path::{Path, PathBuf};
     use std::time::Duration;
 
+    #[cfg(target_os = "macos")]
+    use super::default_runtime_root;
     use super::{
         validate_test_webview_data_directory, RuntimeInputs, CLI_RELATIVE_PATH,
-        DEFAULT_CORE_READY_TIMEOUT, DEFAULT_PLUGIN_READY_TIMEOUT,
+        DEFAULT_CORE_READY_TIMEOUT, DEFAULT_PLUGIN_READY_TIMEOUT, NODE_EXECUTABLE,
     };
     use crate::payload::{write_runtime_state, RuntimeSlot, RuntimeState};
 
@@ -481,13 +510,23 @@ mod tests {
         }
     }
 
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn default_managed_runtime_uses_macos_application_support() {
+        let home = std::env::var("HOME").expect("macOS 测试环境应提供 HOME");
+        assert_eq!(
+            default_runtime_root().unwrap(),
+            Path::new(&home).join("Library/Application Support/dsh-desktop/runtime")
+        );
+    }
+
     #[test]
     fn bundled_runtime_has_priority_over_path() {
         let resources = TestDirectory::new("runtime-bundled");
         let path_runtime = TestDirectory::new("runtime-path");
-        let bundled_node = resources.file("node/node.exe");
+        let bundled_node = resources.file(&format!("node/{NODE_EXECUTABLE}"));
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
-        path_runtime.file("node.exe");
+        path_runtime.file(NODE_EXECUTABLE);
         path_runtime.file(CLI_RELATIVE_PATH);
 
         let inputs = RuntimeInputs {
@@ -582,7 +621,7 @@ mod tests {
         };
         assert!(inputs.resolve(resources.path(), false).is_err());
 
-        let bundled_node = resources.file("node/node.exe");
+        let bundled_node = resources.file(&format!("node/{NODE_EXECUTABLE}"));
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         let resolved = inputs.resolve(resources.path(), false).unwrap();
         assert_eq!(resolved.node, bundled_node);
@@ -594,7 +633,7 @@ mod tests {
     #[test]
     fn release_mode_removes_windows_verbatim_prefix_from_runtime_paths() {
         let resources = TestDirectory::new("runtime-verbatim");
-        let bundled_node = resources.file("node/node.exe");
+        let bundled_node = resources.file(&format!("node/{NODE_EXECUTABLE}"));
         let bundled_cli = resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         let verbatim_resources = PathBuf::from(format!(r"\\?\{}", resources.path().display()));
 
@@ -609,7 +648,7 @@ mod tests {
     fn explicit_dsh_home_wins_and_profile_paths_are_derived_from_it() {
         let resources = TestDirectory::new("runtime-dsh-home-resources");
         let home = TestDirectory::new("runtime-dsh-home");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{NODE_EXECUTABLE}"));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         resources.file("plugins/plugins.lock.json");
 
@@ -637,7 +676,7 @@ mod tests {
     fn default_dsh_home_uses_user_profile_dot_dsh() {
         let resources = TestDirectory::new("runtime-default-dsh-home-resources");
         let user = TestDirectory::new("runtime-default-dsh-home-user");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{NODE_EXECUTABLE}"));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         resources.file("plugins/plugins.lock.json");
 
@@ -654,12 +693,12 @@ mod tests {
     fn startup_prefers_candidate_and_keeps_active_as_fallback() {
         let resources = TestDirectory::new("runtime-selection-resources");
         let runtime_root = TestDirectory::new("runtime-selection-root");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{NODE_EXECUTABLE}"));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
         let active_digest = "a".repeat(64);
         let candidate_digest = "b".repeat(64);
         for digest in [&active_digest, &candidate_digest] {
-            runtime_root.file(&format!("{digest}/node/node.exe"));
+            runtime_root.file(&format!("{digest}/node/{NODE_EXECUTABLE}"));
             runtime_root.file(&format!("{digest}/host/{CLI_RELATIVE_PATH}"));
             fs::create_dir_all(
                 runtime_root
@@ -710,7 +749,7 @@ mod tests {
     fn startup_uses_legacy_resources_when_no_payload_state_exists() {
         let resources = TestDirectory::new("runtime-selection-legacy");
         let runtime_root = TestDirectory::new("runtime-selection-empty");
-        resources.file("node/node.exe");
+        resources.file(&format!("node/{NODE_EXECUTABLE}"));
         resources.file(&format!("host/{CLI_RELATIVE_PATH}"));
 
         let selection = RuntimeInputs {
