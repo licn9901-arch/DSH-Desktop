@@ -18,14 +18,14 @@ const MANAGED_PLUGINS = Object.freeze([
   { package: "dsh-at-file", label: "@ 文件引用" },
   { package: "@omdsh-dev/dsh-genui", label: "GenUI" },
   { package: "dsh-better-sidebar", label: "Better Sidebar" },
-  { package: "@linxin666/dsh-skins", label: "主题皮肤" },
+  { package: "@linxin666/dsh-client-ui-skin-center", label: "主题皮肤" },
   { package: "@vectorize-io/hindsight-coding-agents", label: "Hindsight 记忆" },
   { package: "@liustack/modlens", label: "ModLens 视觉" },
   { package: "@cubee-slide/skills-mcp-manager", label: "Skills / MCP Manager" },
 ]);
 const TOGGLEABLE = new Set(MANAGED_PLUGINS.map((item) => item.package));
-const TRANSITIVE_ONLY_BUNDLES = new Set([
-  "@linxin666/dsh-client-ui-skin-center",
+const RETIRED_THEME_BUNDLES = new Set([
+  "@linxin666/dsh-skins",
 ]);
 let writeTail = Promise.resolve();
 let temporarySequence = 0;
@@ -345,8 +345,8 @@ async function toggleManagedPlugin(body, path = profilePath()) {
   return serializeWrite(async () => {
     const profile = await readProfile(path);
     const originalBundles = profileBundles(profile);
-    // 聚合主题已经包含 Skin Center；依赖包若被 DSH CLI 单独激活会重复注册 ui-skin-center。
-    const bundles = originalBundles.filter((bundle) => !TRANSITIVE_ONLY_BUNDLES.has(bundle));
+    // 新版 Skin Center 已内置全部皮肤；切换时清理旧聚合载具，避免同一加载器重复注册。
+    const bundles = originalBundles.filter((bundle) => !RETIRED_THEME_BUNDLES.has(bundle));
     const next = body.enabled
       ? enableManagedBundle(bundles, body.package)
       : bundles.filter((bundle) => bundle !== body.package);

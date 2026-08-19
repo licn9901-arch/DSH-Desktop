@@ -29,7 +29,7 @@ Project website: [https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 Download the latest `DeepSeek Harness Desktop_*_x64-setup.exe` from
 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) and run the installer. Preview builds support only Windows 10 22H2 and Windows 11 on x64.
 
-`v0.1.0-preview.9` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
+`v0.1.0-preview.10` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
 Before running the installer, verify it against the matching `.sha256` file on the Release page.
 
 The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
@@ -48,14 +48,14 @@ The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 
 ## Bundled Plugins
 
-`v0.1.0-preview.9` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
+`v0.1.0-preview.10` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
 
 | Plugin | Version | Default behavior and permissions |
 |---|---:|---|
 | [`dsh-at-file`](https://github.com/omdsh-dev/dsh-at-file) | 0.6.0 | Searches workspace paths and inserts only relative path references, never file contents |
 | [`@omdsh-dev/dsh-genui`](https://github.com/omdsh-dev/dsh-genui) | 0.8.4 | Renders GenUI, Mermaid, and Three.js locally; actions are sent back to the model as messages |
 | [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) | 0.12.2 | Can access files, Git, and the local PTY; model terminal tools remain disabled, and HTTP/HTTPS takeover is disabled on the first managed install |
-| [`@linxin666/dsh-skins`](https://github.com/zhu1090093659/dsh-web-ui) | 0.1.17 | Installs only Skin Center and the skin aggregate, not the full Web UI suite; the **Themes** settings page supports previewing, applying, and restoring themes |
+| [`@linxin666/dsh-client-ui-skin-center`](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/skins/skin-center) | 0.2.2 | Ships every skin in one package without the retired `dsh-skins` carrier or the full Web UI suite; themes can be previewed, applied, and restored live without restarting the Host |
 | [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | The **Project Memory** settings page configures cloud or self-hosted services, credentials, and project opt-in; projects that are not enabled are neither recorded nor uploaded |
 | [`@liustack/modlens`](https://github.com/liustack/modlens) | 3.16.7 | Provides image reading and structured vision results; no API key, vision endpoint, or Agent CLI is preconfigured |
 | [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.3 | Long-term desktop-maintained build with a unified Skills/MCP interface and controls; MCP configuration is JSON-only, and `env`/`headers` are stored in plaintext at `~/.dsh/mcp.json` |
@@ -127,7 +127,7 @@ npm ci
 npm run build
 ```
 
-During the payload rollout, `npm run build` continues to use the legacy packaging path so releases can be rolled back at any time. Build a payload preview with:
+`npm run build` now uses the payload packaging path. `build:legacy` remains available for regression and upgrade validation:
 
 ```powershell
 npm run package:payload
@@ -135,7 +135,7 @@ npm run verify:payload
 npm run build:payload
 ```
 
-The default `build` command must remain on legacy for `preview.8` and `preview.9`. It may switch to payload in `preview.10` only after two public payload previews pass the complete release gate. Preview.7 is only the legacy upgrade baseline with a fixed SHA-256 and does not count toward payload rollout. Preview.8 passed the first complete gate: the final payload installer is 92.79 MiB, and 20 paired installed-build warm-start runs measured P95 at 5,533 ms for legacy and 5,547 ms for payload. Preview.9 also passed the complete second gate: its solid LZMA installer is 79.09 MiB, with warm P95 at 4,999 ms for legacy and 4,601 ms for payload. The default build remains on legacy through Preview.9 and may switch only in Preview.10.
+The default `build` command remained on legacy for `preview.8` and `preview.9`, and both public payload previews passed the complete release gate. `preview.10` now switches the default build to payload while retaining `build:legacy` for regression coverage. Preview.7 remains only the fixed-SHA-256 legacy upgrade baseline and does not count toward payload rollout. Preview.10 passed the 6/6 upgrade matrix and two forced reproducibility builds; its final installer is 87.56 MiB. Across 20 paired installed-build warm starts, legacy P95 was 11,628 ms and payload P95 was 9,707 ms, below the 12,210 ms limit. The legacy staging path remains until one more stable preview passes.
 
 The build downloads and verifies the official Node archive plus the npm integrity values for DSH, Market, and pnpm according to `runtime.lock.json`. It also verifies the archives and npm integrity values for nine managed bundles and one managed Skill according to `plugins.lock.json`. Each of the three pinned lockfiles is installed independently with `npm ci`; the plugin group additionally uses `--omit=dev --ignore-scripts`. Tauri packaging begins only after Node, the DSH CLI, Web frontend, plugin-local assets, PTY, and licenses have all been verified.
 

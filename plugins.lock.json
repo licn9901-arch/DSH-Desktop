@@ -10,7 +10,7 @@
   "plugins": [
     {
       "package": "@dsh-desktop/runtime-services",
-      "version": "0.1.0-preview.9",
+      "version": "0.1.0-preview.10",
       "bundleId": "desktop-runtime-services",
       "license": "MIT",
       "source": {
@@ -137,7 +137,7 @@
     },
     {
       "package": "@dsh-desktop/theme-settings",
-      "version": "0.1.0-preview.9",
+      "version": "0.1.0-preview.10",
       "bundleId": "desktop-theme-settings",
       "license": "MIT",
       "source": {
@@ -166,30 +166,35 @@
       ]
     },
     {
-      "package": "@linxin666/dsh-skins",
-      "version": "0.1.17",
-      "bundleId": "@linxin666/dsh-skins",
+      "package": "@linxin666/dsh-client-ui-skin-center",
+      "version": "0.2.2",
+      "bundleId": "ui-skin-center",
       "license": "Apache-2.0",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-813NeHLg68YtS83xCXmCkan5tea73wwqYTMVRrGc6yxEySx7QQjxJuO+CsrEwajBxb68s/iw71HiVTb1y+Pmmw=="
+        "integrity": "sha512-+yxMKY6ljKoJsvNYbKn6BxOXKFbXDFRTI4UKCMfiG13VwNpsqvpQC7GjL/mYbNn8joolEWlHgSdhuKAS+J4bGg=="
       },
       "requiredFiles": [
+        "lib/index.js",
+        "lib/client.js",
         "cordis.patch.yml",
-        "skins"
+        "contracts",
+        "skins",
+        "LICENSE"
       ],
       "delivery": {
-        "serverEntries": [],
-        "clientEntries": [],
-        "assets": ["cordis.patch.yml", "skins"],
-        "runtimeExternals": ["@linxin666/dsh-client-ui-skin-center"],
-        "nativeExternals": [],
+        "serverEntries": ["lib/index.js"],
+        "clientEntries": ["lib/client.js"],
+        "assets": ["cordis.patch.yml", "contracts", "skins"],
+        "runtimeExternals": ["schemastery"],
+        "nativeExternals": ["lightningcss"],
         "licenseFiles": ["LICENSE"]
       },
       "permissions": [
-        "列出、试穿、应用和恢复皮肤",
-        "应用皮肤时写入 $DSH_HOME/cordis.patch.yml"
+        "加载内置皮肤与 $DSH_HOME/skins 下的用户皮肤",
+        "在页面内试穿、应用和恢复皮肤，并写入 $DSH_HOME/skin-center-active.json",
+        "读取用户显式选择的 Wallpaper Engine 或本机媒体目录作为背景"
       ]
     },
     {
@@ -279,19 +284,7 @@
       ]
     }
   ],
-  "transitivePackages": [
-    {
-      "package": "@linxin666/dsh-client-ui-skin-center",
-      "version": "0.1.17",
-      "license": "Apache-2.0",
-      "integrity": "sha512-E3/sgA+igBiW/Hp1XPQwHB0BqzbokqOhb+U46hTJHGWGMbYtSQkCUZqIZ6ztHPyd3YtMMzY84LGS1SCYa57O8g==",
-      "requiredFiles": [
-        "lib/index.js",
-        "lib/client.js",
-        "cordis.patch.yml"
-      ]
-    }
-  ],
+  "transitivePackages": [],
   "skills": [
     {
       "name": "genui",

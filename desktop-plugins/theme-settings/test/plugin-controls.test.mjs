@@ -131,22 +131,23 @@ test("开关只修改 bundles，保留 dependencies 与未知用户 bundle", asy
   assert.deepEqual(repeated, updated);
 });
 
-test("启用聚合主题时移除独立 Skin Center bundle", async () => {
+test("启用独立 Skin Center 时移除退役主题载具", async () => {
   const { path } = await fixture();
   const profile = JSON.parse(await readFile(path, "utf8"));
   profile.dependencies["@linxin666/dsh-skins"] = "link:C:/managed/dsh-skins";
   profile.dependencies["@linxin666/dsh-client-ui-skin-center"] = "link:C:/managed/skin-center";
-  profile.dsh.profile.bundles.push("@linxin666/dsh-client-ui-skin-center");
+  profile.dsh.profile.bundles.push("@linxin666/dsh-skins");
   await writeFile(path, JSON.stringify(profile), "utf8");
 
   await toggleManagedPlugin(
-    { profile: "web", package: "@linxin666/dsh-skins", enabled: true },
+    { profile: "web", package: "@linxin666/dsh-client-ui-skin-center", enabled: true },
     path,
   );
 
   const updated = JSON.parse(await readFile(path, "utf8"));
-  assert(updated.dsh.profile.bundles.includes("@linxin666/dsh-skins"));
-  assert(!updated.dsh.profile.bundles.includes("@linxin666/dsh-client-ui-skin-center"));
+  assert(updated.dsh.profile.bundles.includes("@linxin666/dsh-client-ui-skin-center"));
+  assert(!updated.dsh.profile.bundles.includes("@linxin666/dsh-skins"));
+  assert.equal(updated.dependencies["@linxin666/dsh-skins"], "link:C:/managed/dsh-skins");
   assert.equal(updated.dependencies["@linxin666/dsh-client-ui-skin-center"], "link:C:/managed/skin-center");
 });
 

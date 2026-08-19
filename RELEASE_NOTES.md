@@ -1,39 +1,23 @@
-# DeepSeek Harness Desktop v0.1.0-preview.8
+# DeepSeek Harness Desktop v0.1.0-preview.10
 
 这是 Windows x64 社区预览版。本项目不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
 ## 本版内容
 
-- 原生窗口标题栏现在直接显示桌面版版本号，方便截图、反馈和排查时确认实际运行版本。
-- 插件市场“源码”和 README 中的外链新窗口请求现在交给系统默认浏览器，主 WebView 保持在当前页面。
-- 修复 candidate 预校验后把 `http://tauri.localhost` 误判为外链并拉起浏览器的问题；Tauri 内置 origin 始终留在主 WebView。
-- Market 安装公共 GitHub 依赖时增加 HTTPS 兜底，不再要求用户必须预先配置 GitHub SSH 密钥。
-- Market 安装、更新或卸载插件后只保留本次操作产生的 bundle 变化，不会顺带启用 profile 中已有的伴随依赖。
-- Skin Center 伴随包只用于 Node 解析，不再作为顶层 bundle 重复加载；主题入口、应用状态和 Host 重启保持稳定。
-- 设置继续提供“预置插件”“项目记忆”“主题”“技能与 MCP”和“插件市场”入口。
-- 内置 `dshmarket@1.10.0` 与唯一的 `pnpm@10.34.5`；三组 audit 为零漏洞，pnpm 9/10/11 历史 profile 已通过真实兼容与字节恢复矩阵。
-- 新增确定性三 ZIP payload、原子 candidate/active/previous 状态机和快速 NSIS preview；完成灰度门禁前默认构建仍使用 legacy。
-- 健康启动不再因 Windows junction 的 verbatim/长路径表示差异重复重建 10 个插件链接；插件准备与 WebView2 初始化并行。
-- PDB、source map、类型、测试和示例源码从默认安装器移入独立 debug symbols 产物。
-- Skills/MCP Manager 使用桌面维护版 `@cubee-slide/skills-mcp-manager@0.2.3`，MCP 配置只保留 JSON 编辑器。
-- GenUI Skill 继续作为 DSH 用户级全局 Skill 托管；用户自有、修改或删除的同名 Skill 不覆盖。
-- ModLens 保持 `3.16.7`，不预置密钥或视觉端点。
-
-## 安全边界
-
-- Hindsight Token 写入 `$DSH_HOME/.credentials.yaml`，设置页只读取配置状态，不回显内容。
-- Hindsight 始终保持 `harnesses.dsh.optInOnly=true`，只有显式选择的绝对路径会写入清单。
-- MCP `env` 与 `headers` 仍以明文保存在 `~/.dsh/mcp.json`。
-- profile 内控制文件和依赖树支持失败回滚；第三方安装脚本在 profile 外产生的副作用不属于事务边界。
-- 第三方插件与桌面应用拥有相同主机权限，目前没有插件签名或进程级沙箱。
+- 默认 `npm run build` 在连续两轮公开 payload 门禁通过后切换到确定性 payload 构建；legacy 构建链继续保留，供回归和升级验证使用。
+- 主题中心升级为独立的 `@linxin666/dsh-client-ui-skin-center@0.2.2`，单包交付全部内置皮肤，不再安装已退役的 `dsh-skins` 聚合载具。
+- 发布构建会把设置页画廊预览确定性缩放为最大 480px 的调色板 PNG；主题运行时使用的原始背景资产保持不变。
+- 从旧版升级时，仅迁移仍由桌面 marker 管理的主题载具，并把原有启用状态转交给新的 Skin Center；用户自行安装的同名依赖不受影响。
+- 主题试穿、应用和恢复现在即时生效，无需重启 Host；设置页会在切换时清理旧 bundle，避免重复注册。
+- 修复插件 fast path 对伴随依赖 bundle 状态判断不完整的问题，异常激活的 transitive-only bundle 会触发修复流程。
+- Skin Center 可读取用户显式选择的 Wallpaper Engine 或本机媒体目录，并将当前选择写入 `$DSH_HOME/skin-center-active.json`。
+- 最终安装器为 91,814,862 字节（87.56 MiB），SHA-256 为 `ee7f9a4613a920a0b76eec5af696a2e0aebee21d856e188da87bcfb734fd52df`。
+- 三 ZIP 共 93,546,324 字节，展开为 254,073,088 字节、12,972 个文件；两次强制构建的 manifest 与三 ZIP 逐字节一致。
+- 6/6 升级矩阵与三组零漏洞 audit 通过；20 对 warm 启动 P95 为 legacy 11,628 ms、payload 9,707 ms，低于 12,210 ms 门限。
 
 ## 安装提示
 
-- preview.7 仅作为 SHA-256 为 `e331e628b07bf574e823610324130c258d77ed1e57113b59426feed1a3a9d3d9` 的 legacy 升级基线。
-- 本版是第一轮公开 payload preview；默认 `npm run build` 仍指向 legacy，Release 安装器必须显式使用 `build:payload` 并通过完整门禁。
-- preview.8 完整 payload 门禁已通过；最终安装器 SHA-256 为 `c16498e160cc94b73082edf249353d54e2b6a3129920a2587963815f7036ba5e`。
 - 支持 Windows 10 22H2 / Windows 11 x64。
 - 安装包没有 Authenticode 签名，SmartScreen 可能显示未知发布者。
 - 请先核对随 Release 提供的 `.sha256` 文件。
-- 设置变更后，请从托盘选择“重启 DSH 服务”。
 - 卸载不会删除 DSH 用户会话、profile、插件状态、Skill 或第三方配置。

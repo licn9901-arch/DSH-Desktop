@@ -22,6 +22,8 @@ const MARKET_BUNDLE: &str = "dshmarket";
 const MARKET_RUNTIME_ALIAS: &str = "dshmarket-desktop";
 const RUNTIME_SERVICES_BUNDLE: &str = "@dsh-desktop/runtime-services";
 const DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/theme-settings";
+const LEGACY_SKINS_BUNDLE: &str = "@linxin666/dsh-skins";
+const SKIN_CENTER_BUNDLE: &str = "@linxin666/dsh-client-ui-skin-center";
 const LEGACY_SKILLS_MCP_BUNDLE: &str = "@zebbkira/dsh-skills-mcp-manager";
 const SKILLS_MCP_BUNDLE: &str = "@cubee-slide/skills-mcp-manager";
 const LEGACY_SIDE_PANEL: &str = "@dsh-external/dsh-side-panel";
@@ -513,17 +515,15 @@ impl PluginManager {
             .filter_map(Value::as_str)
             .collect::<Vec<_>>();
 
-        for (package, version, should_be_bundle) in lock
+        for (package, version) in lock
             .plugins
             .iter()
-            .map(|plugin| (plugin.package.as_str(), plugin.version.as_str(), true))
-            .chain(lock.transitive_packages.iter().map(|dependency| {
-                (
-                    dependency.package.as_str(),
-                    dependency.version.as_str(),
-                    false,
-                )
-            }))
+            .map(|plugin| (plugin.package.as_str(), plugin.version.as_str()))
+            .chain(
+                lock.transitive_packages
+                    .iter()
+                    .map(|dependency| (dependency.package.as_str(), dependency.version.as_str())),
+            )
         {
             let target = store_modules.join(package_relative_path(package)?);
             let target_text = normalized_path(&target);
@@ -545,7 +545,7 @@ impl PluginManager {
                     )?
                     .as_ref()
                     .is_none_or(|current| !paths_equal(current, &target))
-                || (should_be_bundle && bundles.contains(&package)) != record.bundle_enabled
+                || bundles.contains(&package) != record.bundle_enabled
             {
                 return Ok(false);
             }
@@ -1488,6 +1488,23 @@ fn plan_profile(
             })
         });
 
+    // 0.2 起 Skin Center 自身携带全部皮肤；仅迁移仍由桌面 marker 持有的旧聚合载具，
+    // 并把用户原先对主题插件的启用状态转交给新的独立 bundle。
+    let legacy_skin_enabled = state.managed.get(LEGACY_SKINS_BUNDLE).and_then(|record| {
+        let dependency = dependency_values
+            .get(LEGACY_SKINS_BUNDLE)
+            .and_then(Value::as_str)?;
+        (dependency == link_spec(&record.link_target)).then(|| {
+            let enabled = current_bundles
+                .iter()
+                .any(|bundle| bundle == LEGACY_SKINS_BUNDLE);
+            dependency_values.remove(LEGACY_SKINS_BUNDLE);
+            current_bundles.retain(|bundle| bundle != LEGACY_SKINS_BUNDLE);
+            removed_packages.push(LEGACY_SKINS_BUNDLE.to_owned());
+            enabled
+        })
+    });
+
     let mut next_state = PluginInstallState {
         schema_version: SUPPORTED_SCHEMA_VERSION,
         lock_digest: lock_digest.to_owned(),
@@ -1526,6 +1543,8 @@ fn plan_profile(
             .contains(&plugin.package.as_str())
         {
             true
+        } else if plugin.package == SKIN_CENTER_BUNDLE && legacy_skin_enabled.is_some() {
+            legacy_skin_enabled.unwrap_or(true)
         } else if plugin.package == SKILLS_MCP_BUNDLE && legacy_skills_enabled.is_some() {
             legacy_skills_enabled.unwrap_or(true)
         } else {
@@ -1549,7 +1568,7 @@ fn plan_profile(
         managed_packages.push(plugin.package.clone());
     }
 
-    // Skin Center 等伴随依赖需要 profile-local junction，但不能作为独立 bundle 激活。
+    // 运行时伴随依赖需要 profile-local junction，但不能作为独立 bundle 激活。
     for dependency in &lock.transitive_packages {
         let target = store_node_modules.join(package_relative_path(&dependency.package)?);
         let target_text = normalized_path(&target);
@@ -1876,8 +1895,9 @@ mod tests {
         plan_profile, repair_legacy_skin_patch_content, sha256_hex, DirectoryLinker,
         ManagedPluginState, ManagedSkill, ManagedSkillAction, ManagedSkillState,
         PluginInstallState, PluginLock, PluginManager, BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE,
-        LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE, MARKET_BUNDLE, MARKET_RUNTIME_ALIAS,
-        RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, WEB_APP_BUNDLE,
+        LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE, LEGACY_SKINS_BUNDLE, MARKET_BUNDLE,
+        MARKET_RUNTIME_ALIAS, RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, SKIN_CENTER_BUNDLE,
+        WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {
@@ -1891,14 +1911,12 @@ mod tests {
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@dsh-desktop/theme-settings","version":"0.1.0","bundleId":"desktop-theme-settings","license":"MIT","source":{"type":"local","path":"desktop-plugins/theme-settings"},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]},
-                {"package":"@linxin666/dsh-skins","version":"0.1.17","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["cordis.patch.yml"]},
+                {"package":"@linxin666/dsh-client-ui-skin-center","version":"0.2.2","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-+yxMKY6ljKoJsvNYbKn6BxOXKFbXDFRTI4UKCMfiG13VwNpsqvpQC7GjL/mYbNn8joolEWlHgSdhuKAS+J4bGg=="},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml","skins"]},
                 {"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight-coding-agents","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dist/dsh.js"]},
                 {"package":"@liustack/modlens","version":"3.16.7","bundleId":"modlens","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dsh/index.js"]},
                 {"package":"@cubee-slide/skills-mcp-manager","version":"0.2.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="},"requiredFiles":["lib/index.js"]}
               ],
-              "transitivePackages": [
-                {"package":"@linxin666/dsh-client-ui-skin-center","version":"0.1.17","license":"Apache-2.0","integrity":"sha512-E3/sgA+igBiW/Hp1XPQwHB0BqzbokqOhb+U46hTJHGWGMbYtSQkCUZqIZ6ztHPyd3YtMMzY84LGS1SCYa57O8g==","requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]}
-              ],
+              "transitivePackages": [],
               "skills":[{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
             }"#,
         )
@@ -2001,13 +2019,13 @@ mod tests {
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
                 "@dsh-desktop/theme-settings",
-                "@linxin666/dsh-skins",
+                SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
                 SKILLS_MCP_BUNDLE
             ]
         );
-        assert_eq!(plan.managed_packages.len(), 10);
+        assert_eq!(plan.managed_packages.len(), 9);
         assert_eq!(plan.next_state.lock_digest, "digest-a");
         assert!(plan.profile["dependencies"]["dsh-at-file"]
             .as_str()
@@ -2179,7 +2197,7 @@ mod tests {
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
                 "@dsh-desktop/theme-settings",
-                "@linxin666/dsh-skins",
+                SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
                 SKILLS_MCP_BUNDLE,
@@ -2189,31 +2207,59 @@ mod tests {
     }
 
     #[test]
-    fn transitive_skin_center_is_removed_from_historical_top_level_bundles() {
+    fn retired_skin_carrier_transfers_its_enabled_state_to_standalone_skin_center() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let legacy_target = r"C:\old\node_modules\@linxin666\dsh-skins";
+        let skin_target = r"C:\old\node_modules\@linxin666\dsh-client-ui-skin-center";
+        let mut managed = BTreeMap::new();
+        managed.insert(
+            LEGACY_SKINS_BUNDLE.to_owned(),
+            ManagedPluginState {
+                version: "0.1.17".to_owned(),
+                link_target: legacy_target.to_owned(),
+                bundle_enabled: true,
+            },
+        );
+        managed.insert(
+            SKIN_CENTER_BUNDLE.to_owned(),
+            ManagedPluginState {
+                version: "0.1.17".to_owned(),
+                link_target: skin_target.to_owned(),
+                bundle_enabled: false,
+            },
+        );
+        let state = PluginInstallState {
+            schema_version: 2,
+            lock_digest: "old".to_owned(),
+            managed,
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
         let profile = json!({
           "dependencies": {
-            "@linxin666/dsh-client-ui-skin-center": "link:C:/managed/node_modules/@linxin666/dsh-client-ui-skin-center"
+            LEGACY_SKINS_BUNDLE: "link:C:/old/node_modules/@linxin666/dsh-skins",
+            SKIN_CENTER_BUNDLE: "link:C:/old/node_modules/@linxin666/dsh-client-ui-skin-center"
           },
           "dsh": {"profile": {"bundles": [
             BASE_BUNDLE,
             WEB_APP_BUNDLE,
-            "@linxin666/dsh-skins",
-            "@linxin666/dsh-client-ui-skin-center"
+            LEGACY_SKINS_BUNDLE
           ]}}
         });
-        let plan = plan_profile(
-            profile,
-            &PluginInstallState::default(),
-            &lock(),
-            Path::new(r"C:\managed\node_modules"),
-            "digest-transitive-bundle",
-        )
-        .unwrap();
+        let plan = plan_profile(profile, &state, &lock(), store, "digest-skin-center-v2").unwrap();
 
         let active = bundles(&plan.profile);
-        assert!(active.contains(&"@linxin666/dsh-skins"));
-        assert!(!active.contains(&"@linxin666/dsh-client-ui-skin-center"));
-        assert!(!plan.next_state.managed["@linxin666/dsh-client-ui-skin-center"].bundle_enabled);
+        assert!(!active.contains(&LEGACY_SKINS_BUNDLE));
+        assert!(active.contains(&SKIN_CENTER_BUNDLE));
+        assert!(plan.profile["dependencies"]
+            .get(LEGACY_SKINS_BUNDLE)
+            .is_none());
+        assert!(plan.profile["dependencies"][SKIN_CENTER_BUNDLE]
+            .as_str()
+            .unwrap()
+            .starts_with("link:C:/managed/node_modules"));
+        assert!(plan.next_state.managed[SKIN_CENTER_BUNDLE].bundle_enabled);
+        assert_eq!(plan.removed_packages, vec![LEGACY_SKINS_BUNDLE]);
     }
 
     #[test]
@@ -2243,7 +2289,7 @@ mod tests {
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
                 "@dsh-desktop/theme-settings",
-                "@linxin666/dsh-skins",
+                SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
                 SKILLS_MCP_BUNDLE,
@@ -2691,6 +2737,78 @@ mod tests {
             fs::metadata(&marker).unwrap().modified().unwrap(),
             marker_modified
         );
+    }
+
+    #[test]
+    fn fast_path_rejects_an_active_transitive_only_bundle() {
+        let (root, manager, linker) = manager_fixture();
+        root.write(
+            "home/.dsh/profiles/web/pnpm-workspace.yaml",
+            b"packages:\n  - .\n",
+        );
+        let lock = PluginLock::parse(
+            br#"{
+              "schemaVersion":1,
+              "plugins":[
+                {"package":"@dsh-desktop/runtime-services","version":"1.0.0","bundleId":"desktop-runtime-services","license":"MIT","source":{"type":"local","path":"desktop-plugins/runtime-services"}}
+              ],
+              "transitivePackages":[
+                {"package":"helper-only","version":"1.0.0","license":"MIT","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="}
+              ]
+            }"#,
+        )
+        .unwrap();
+        let store = root.path().join("store/node_modules");
+        let runtime_target = store.join("@dsh-desktop/runtime-services");
+        let helper_target = store.join("helper-only");
+        let runtime_link = manager
+            .web_profile
+            .join("node_modules/@dsh-desktop/runtime-services");
+        let helper_link = manager.web_profile.join("node_modules/helper-only");
+        linker.links.lock().unwrap().extend([
+            (runtime_link, runtime_target.clone()),
+            (helper_link, helper_target.clone()),
+        ]);
+        let state = PluginInstallState {
+            schema_version: 2,
+            lock_digest: "digest".to_owned(),
+            managed: BTreeMap::from([
+                (
+                    RUNTIME_SERVICES_BUNDLE.to_owned(),
+                    ManagedPluginState {
+                        version: "1.0.0".to_owned(),
+                        link_target: normalized_path(&runtime_target),
+                        bundle_enabled: true,
+                    },
+                ),
+                (
+                    "helper-only".to_owned(),
+                    ManagedPluginState {
+                        version: "1.0.0".to_owned(),
+                        link_target: normalized_path(&helper_target),
+                        bundle_enabled: false,
+                    },
+                ),
+            ]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dependencies": {
+            RUNTIME_SERVICES_BUNDLE: format!("link:{}", normalized_path(&runtime_target)),
+            "helper-only": format!("link:{}", normalized_path(&helper_target))
+          },
+          "dsh": {"profile": {"bundles": [
+            BASE_BUNDLE,
+            RUNTIME_SERVICES_BUNDLE,
+            MARKET_BUNDLE,
+            "helper-only"
+          ]}}
+        });
+
+        assert!(!manager
+            .fast_path_matches(&profile, &state, &lock, &store, "digest")
+            .unwrap());
     }
 
     #[test]

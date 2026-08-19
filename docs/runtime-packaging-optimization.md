@@ -8,9 +8,9 @@
 
 ## 当前状态
 
-payload 链路已经实现，并已由 preview.8、preview.9 连续完成两轮公开门禁。`npm run build` 在 preview.9
-继续指向 `build:legacy`；preview.10 才允许切换默认构建。切换后还需一个稳定 preview，才能删除 legacy
-暂存路径。
+payload 链路已经实现，并已由 preview.8、preview.9 连续完成两轮公开门禁。preview.10 已将
+`npm run build` 切换到 `build:payload`，并通过切换后的完整门禁；还需一个稳定 preview，才能删除
+legacy 暂存路径。
 
 | 能力 | 当前状态 | 发布约束 |
 |---|---|---|
@@ -18,10 +18,10 @@ payload 链路已经实现，并已由 preview.8、preview.9 连续完成两轮�
 | Host/插件裁剪与 debug 分离 | 已实现 | PDB/source map 不进入默认安装器 |
 | 三个确定性 ZIP 与 manifest | 已实现 | 每次缓存复用前重新校验 |
 | candidate/active/previous 状态机 | 已实现 | candidate 通过真实 readiness 后才能晋升 |
-| legacy 与 payload 双构建 | 已实现 | 默认仍为 legacy |
+| legacy 与 payload 双构建 | 已实现 | 默认为 payload，legacy 继续用于回归 |
 | clean payload 安装器 smoke | 已实现并纳入门禁 | 使用隔离 runtime 根，不触碰真实 profile |
-| legacy/payload 连续升级矩阵 | preview.8 已通过 4/4，preview.9 已通过 6/6 | preview.10 才允许切换默认构建 |
-| 20 对交替启动 P95 | preview.8、preview.9 均已通过 | 不得以单独 payload 样本替代相对 P95 |
+| legacy/payload 连续升级矩阵 | preview.8 已通过 4/4，preview.9、preview.10 已通过 6/6 | 再经过一个稳定 preview 才删除 legacy |
+| 20 对交替启动 P95 | preview.8、preview.9、preview.10 均已通过 | 不得以单独 payload 样本替代相对 P95 |
 | `pnpm@10.34.5` 依赖审计 | 已通过 | 三组 audit 必须持续为 0 total/high/critical |
 
 ## 目标与基线
@@ -62,6 +62,15 @@ preview.9 最终 solid LZMA 安装器为 82,934,193 字节（79.09 MiB），SHA-
 `3502e8685c168414beb1da3855205f5d38dd234e4147563f361af0c635047848`。升级矩阵 6/6 通过；20 对安装版
 warm 启动中，legacy P50/P95 为 4,318/4,999 ms，payload 为 4,056/4,601 ms，门限为 5,249 ms；
 各 3 次 cold 为 legacy 16,509/16,000/16,130 ms、payload 5,306/5,207/4,647 ms。
+
+preview.10 将默认构建切换为 payload。Skin Center 画廊的 26 张预览在 staging 副本内确定性缩放为
+最大 480px 的调色板 PNG，从 48,108,062 字节降至 901,836 字节；主题运行时背景原图不变。最终 payload
+为 12,972 个展开文件、254,073,088 字节，三个 ZIP 共 93,546,324 字节，安装器为 91,814,862 字节
+（87.56 MiB），SHA-256 为 `ee7f9a4613a920a0b76eec5af696a2e0aebee21d856e188da87bcfb734fd52df`。
+两次强制构建的四个资源逐字节一致，payload digest 为
+`fbdb8a56786a1fe331ba2cf400021be33ce9b74b1888404db0d8889e848c7f59`。6/6 升级矩阵通过；20 对 warm
+启动中，legacy P50/P95 为 7,662/11,628 ms，payload 为 7,921/9,707 ms，门限为 12,210 ms；各 3 次
+cold 为 legacy 43,969/25,106/42,109 ms、payload 8,833/11,089/12,494 ms。
 
 preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902/5,533 ms，payload 为
 4,973/5,547 ms，门限为 5,810 ms；各 3 次 cold 为 legacy 17,278/16,902/17,827 ms、payload
@@ -244,9 +253,10 @@ example 在构建期运行。
   `git diff --check`。
 
 灰度顺序固定为：preview.8 是第一轮公开 payload，preview.9 重复全部门禁并增加 preview.8 到 preview.9
-的停止/运行中升级；两轮默认 build 均保持 legacy。两轮都通过后 preview.10 才切默认 payload，同时保留
-`build:legacy`。矩阵必须覆盖 candidate 启动失败、损坏资源与回滚，并在相同机器和防病毒状态下记录交替
-20 对 warm 与各 3 次 cold 启动。未完成项会阻止发布和默认构建切换。
+的停止/运行中升级；两轮默认 build 均保持 legacy。preview.10 已在两轮通过后切换默认 payload，同时保留
+`build:legacy`，并完成切换后的 6/6 升级矩阵与启动门禁。还需一个稳定 preview 才删除 legacy 暂存路径。
+矩阵必须覆盖 candidate 启动失败、损坏资源与回滚，并在相同机器和防病毒状态下记录交替 20 对 warm 与
+各 3 次 cold 启动。未完成项会阻止发布和后续 legacy 删除。
 
 ## 不变量与非目标
 

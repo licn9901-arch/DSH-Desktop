@@ -48,6 +48,7 @@ function Get-CurrentPayloadCacheInputs {
         'rust-toolchain.toml',
         'scripts\stage-runtime.ps1',
         'scripts\stage-plugins.ps1',
+        'scripts\optimize-plugin-previews.mjs',
         'scripts\stage-payload.ps1'
     )
     $lines = @(

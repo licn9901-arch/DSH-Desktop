@@ -36,7 +36,7 @@ $expectedOrder = @(
     '@omdsh-dev/dsh-genui',
     'dsh-better-sidebar',
     '@dsh-desktop/theme-settings',
-    '@linxin666/dsh-skins',
+    '@linxin666/dsh-client-ui-skin-center',
     '@vectorize-io/hindsight-coding-agents',
     '@liustack/modlens',
     '@cubee-slide/skills-mcp-manager'

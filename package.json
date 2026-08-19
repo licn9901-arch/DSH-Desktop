@@ -1,6 +1,6 @@
 {
   "name": "dsh-desktop-tauri",
-  "version": "0.1.0-preview.9",
+  "version": "0.1.0-preview.10",
   "private": true,
   "description": "Tauri desktop shell for DeepSeek Harness (dsh web)",
   "scripts": {
@@ -30,7 +30,7 @@
     "dev": "npm run validate:icons && tauri dev --config src-tauri/tauri.legacy.conf.json",
     "build:legacy": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build --config src-tauri/tauri.legacy.conf.json",
     "build:payload": "pwsh -NoProfile -File scripts/build-payload.ps1",
-    "build": "npm run build:legacy"
+    "build": "npm run build:payload"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",

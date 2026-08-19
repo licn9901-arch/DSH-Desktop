@@ -1,12 +1,12 @@
 # 预览版发布检查表
 
-## Preview.8 验收记录
+## Preview.8-10 验收记录
 
-preview.8 第一轮公开 payload 门禁已通过：三组 audit 为 0 漏洞，核心行覆盖率 80.33%，两次强制构建资源
-逐项同 SHA，升级/回滚矩阵 4/4，通过 20 对 warm P95 门限。最终安装器为 97,299,624 字节，SHA-256
-`c16498e160cc94b73082edf249353d54e2b6a3129920a2587963815f7036ba5e`。preview.9 的同输入 NSIS A/B
-确认 solid LZMA 比 `none` 减少 14,357,629 字节（13.693 MiB），超过 10 MiB 采用阈值；第二轮完整门禁、
-发布签名和标签仍待执行。
+preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；preview.9 采用 solid LZMA，最终安装器为
+82,934,193 字节。preview.10 已切换默认 payload 并通过 80.94% 核心行覆盖率、三组零漏洞 audit、两次
+强制构建逐项同 SHA、6/6 升级矩阵和 20 对 warm P95 门禁。最终安装器为 91,814,862 字节，SHA-256 为
+`ee7f9a4613a920a0b76eec5af696a2e0aebee21d856e188da87bcfb734fd52df`；payload P95 为 9,707 ms，低于
+12,210 ms 门限。还需一个稳定 preview，才允许删除 legacy 暂存路径。
 
 ## 版本与锁定输入
 

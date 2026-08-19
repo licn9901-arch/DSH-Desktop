@@ -189,9 +189,10 @@ $keyInputs = @(
     'src-tauri\src\payload.rs',
     'src-tauri\examples\payload-tool.rs',
     'rust-toolchain.toml',
-    'scripts\stage-runtime.ps1',
-    'scripts\stage-plugins.ps1',
-    'scripts\stage-payload.ps1'
+        'scripts\stage-runtime.ps1',
+        'scripts\stage-plugins.ps1',
+        'scripts\optimize-plugin-previews.mjs',
+        'scripts\stage-payload.ps1'
 )
 $keyLines = @(
     'platform=win32-x64',
@@ -265,6 +266,9 @@ try {
     if (Test-Path -LiteralPath $sharpWasm) { Remove-Item -LiteralPath $sharpWasm -Recurse -Force }
     Remove-PluginClientDuplicates -NodeModules (Join-Path $pluginSource 'node_modules')
     Remove-NodeIgnoredModuleFormats -NodeModules (Join-Path $hostSource 'node_modules')
+    & (Join-Path $nodeSource 'node.exe') (Join-Path $PSScriptRoot 'optimize-plugin-previews.mjs') `
+        --host-node-modules (Join-Path $hostSource 'node_modules') --plugin-root $pluginSource
+    if ($LASTEXITCODE -ne 0) { throw 'Skin preview optimization failed.' }
     $trimWatch.Stop()
 
     $bundleWatch = [System.Diagnostics.Stopwatch]::StartNew()

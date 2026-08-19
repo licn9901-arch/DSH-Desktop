@@ -29,7 +29,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.9` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.10` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -49,7 +49,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.9` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.10` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -57,7 +57,7 @@
 | [`dsh-at-file`](https://github.com/omdsh-dev/dsh-at-file) | 0.6.0 | 搜索工作区路径，只插入相对路径引用，不注入文件内容 |
 | [`@omdsh-dev/dsh-genui`](https://github.com/omdsh-dev/dsh-genui) | 0.8.4 | 本地渲染 GenUI、Mermaid 和 Three.js；action 会作为消息回传模型 |
 | [`dsh-better-sidebar`](https://github.com/omdsh-dev/DSH-better-sidebar) | 0.12.2 | 可操作文件、Git 和本机 PTY；模型终端工具保持关闭，首次托管安装关闭 HTTP/HTTPS 接管 |
-| [`@linxin666/dsh-skins`](https://github.com/zhu1090093659/dsh-web-ui) | 0.1.17 | 只安装 Skin Center 与聚合皮肤，不安装 Web UI 全家桶；设置左侧“主题”可试穿、应用和恢复 |
+| [`@linxin666/dsh-client-ui-skin-center`](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/skins/skin-center) | 0.2.2 | 单包内置全部皮肤，不安装已退役的 `dsh-skins` 载具或 Web UI 全家桶；可即时试穿、应用和恢复，无需重启 Host |
 | [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | 设置左侧“项目记忆”可配置 Cloud/自托管服务、凭据和项目 opt-in；未启用项目不记录也不上传 |
 | [`@liustack/modlens`](https://github.com/liustack/modlens) | 3.16.7 | 提供图片读取和结构化视觉结果；不预置密钥、视觉端点或 Agent CLI |
 | [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.3 | 桌面长期维护版；统一 Skills/MCP 界面与按钮，MCP 只保留 JSON 配置；`env`/`headers` 明文存于 `~/.dsh/mcp.json` |
@@ -144,7 +144,7 @@ npm ci
 npm run build
 ```
 
-当前 `npm run build` 保持 legacy 打包，确保 payload 灰度期间可随时回退。payload preview 使用：
+当前 `npm run build` 已切换到 payload 打包；`build:legacy` 继续保留，用于回归与升级验证。相关命令为：
 
 ```powershell
 npm run package:payload
@@ -152,11 +152,11 @@ npm run verify:payload
 npm run build:payload
 ```
 
-`preview.8` 和 `preview.9` 的默认 `build` 都必须保持 legacy；两轮公开 payload preview 的完整门禁通过后，
-`preview.10` 才允许切换默认 payload。preview.7 只作为固定 SHA-256 的 legacy 升级基线，不能计入 payload 灰度。
-preview.8 第一轮门禁已通过，最终 payload 安装器为 92.79 MiB，20 对安装版 warm P95 为 legacy 5,533 ms、
-payload 5,547 ms。preview.9 第二轮门禁也已通过，solid LZMA 安装器为 79.09 MiB，warm P95 为
-legacy 4,999 ms、payload 4,601 ms；默认构建仍在 preview.9 保持 legacy，preview.10 才允许切换。
+`preview.8` 和 `preview.9` 的默认 `build` 都保持 legacy，并连续通过两轮公开 payload 完整门禁；
+`preview.10` 已将默认 `build` 切换为 payload，同时保留 `build:legacy` 供回归。preview.7 只作为固定
+SHA-256 的 legacy 升级基线，不能计入 payload 灰度。preview.10 的 6/6 升级矩阵与两次强制复现构建
+均已通过，最终安装器为 87.56 MiB；20 对安装版 warm P95 为 legacy 11,628 ms、payload 9,707 ms，
+低于 12,210 ms 门限。默认切换后还需一个稳定 preview，才会删除 legacy 暂存路径。
 
 构建会按 `runtime.lock.json` 下载并校验官方 Node 压缩包，以及 DSH、Market、pnpm 的 npm
 integrity，并按 `plugins.lock.json` 校验 9 个托管 bundle 与 1 个托管 Skill
