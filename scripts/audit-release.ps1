@@ -4,6 +4,8 @@ param(
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $releaseRoot = Join-Path $repoRoot ".release-work\$($package.version)"
 $outputPath = if ([string]::IsNullOrWhiteSpace($Output)) {
@@ -26,7 +28,10 @@ function Invoke-ProjectAudit {
         [Parameter(Mandatory = $true)][string]$Directory,
         [switch]$ProductionOnly
     )
-    $arguments = @('audit', '--json', '--cache', (Join-Path $repoRoot ".runtime-cache\npm-audit-$Name"))
+    $arguments = @(
+        'audit', '--json', '--registry=https://registry.npmjs.org',
+        '--cache', (Join-Path $repoRoot ".runtime-cache\npm-audit-$Name")
+    )
     if ($ProductionOnly) { $arguments += '--omit=dev' }
     Push-Location $Directory
     try {
@@ -64,9 +69,10 @@ $reports = @(
     Invoke-ProjectAudit -Name 'plugin-runtime' -Directory (Join-Path $repoRoot 'plugin-runtime') -ProductionOnly
 )
 $result = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = [DateTime]::UtcNow.ToString('O')
     desktopVersion = $package.version
+    sourceCommit = $sourceCommit
     nodeVersion = (& node.exe --version).TrimStart('v')
     npmVersion = (& npm.cmd --version).Trim()
     projects = $reports

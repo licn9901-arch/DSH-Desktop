@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import {
   existsSync,
   mkdirSync,
@@ -18,6 +19,15 @@ import { runPlugin } from "../desktop-plugins/runtime-services/lib/index.js";
 const repoRoot = resolve(import.meta.dirname, "..");
 const runtimeLock = JSON.parse(readFileSync(join(repoRoot, "runtime.lock.json"), "utf8"));
 const desktopPackage = JSON.parse(readFileSync(join(repoRoot, "package.json"), "utf8"));
+const sourceCommit = execFileSync("git.exe", [
+  "-C",
+  repoRoot,
+  "-c",
+  `safe.directory=${repoRoot.replaceAll("\\", "/")}`,
+  "rev-parse",
+  "HEAD",
+], { encoding: "utf8", windowsHide: true }).trim();
+if (!/^[0-9a-f]{40}$/.test(sourceCommit)) throw new Error(`invalid source commit: ${sourceCommit}`);
 const historicalVersions = ["9.15.9", runtimeLock.pnpm.version, "11.22.0"];
 const nodeExecutable = join(repoRoot, "src-tauri", "resources", "node", "node.exe");
 const hostRoot = join(repoRoot, "src-tauri", "resources", "host");
@@ -360,9 +370,10 @@ async function main() {
     const cases = [];
     for (const version of historicalVersions) cases.push(await runVersionCase(temporaryRoot, version, fixtures));
     const report = {
-      schemaVersion: 1,
+      schemaVersion: 2,
       generatedAtUtc: new Date().toISOString(),
       desktopVersion: desktopPackage.version,
+      sourceCommit,
       nodeVersion: runtimeLock.node.version,
       fixedPnpmVersion: runtimeLock.pnpm.version,
       cases,

@@ -2,6 +2,9 @@ param([string]$InstallerDirectory = '..\src-tauri\target\release\bundle\nsis')
 
 $ErrorActionPreference = 'Stop'
 $projectRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+Assert-DshReleaseWorktreeClean -RepoRoot $projectRoot
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $projectRoot
 $installerRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot $InstallerDirectory))
 $deployRoot = [System.IO.Path]::GetFullPath((Join-Path $projectRoot '.deploy-artifacts'))
 $runtimeLock = Get-Content -LiteralPath (Join-Path $projectRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
@@ -31,6 +34,9 @@ function Assert-ReportVersion {
     if ($Report.desktopVersion -ne $package.version) {
         throw "$Name desktopVersion mismatch: $($Report.desktopVersion) != $($package.version)"
     }
+    if ($Report.sourceCommit -ne $sourceCommit) {
+        throw "$Name sourceCommit mismatch: $($Report.sourceCommit) != $sourceCommit"
+    }
 }
 
 # 重建 stage-payload 的完整缓存输入序列，确保 debug symbols 来自当前源码与工具链而非旧 digest 缓存。
@@ -47,6 +53,7 @@ function Get-CurrentPayloadCacheInputs {
         'src-tauri\examples\payload-tool.rs',
         'rust-toolchain.toml',
         'scripts\stage-runtime.ps1',
+        'scripts\patch-directory-picker.ps1',
         'scripts\stage-plugins.ps1',
         'scripts\optimize-plugin-previews.mjs',
         'scripts\stage-payload.ps1'
@@ -112,7 +119,7 @@ if (-not $reproducibility.Value.passed) { throw 'Payload reproducibility gate di
 if (-not $startup.Value.gate.passed) { throw 'Startup P95 comparison gate did not pass.' }
 if (-not $upgrade.Value.passed) { throw 'Installer upgrade matrix did not pass.' }
 if (-not $gate.Value.passed) { throw 'Unified release gate did not pass.' }
-if ($build.Value.schemaVersion -ne 2 -or
+if ($build.Value.schemaVersion -ne 3 -or
     $build.Value.nodeVersion -ne $runtimeLock.node.version -or
     $build.Value.pnpmVersion -ne $runtimeLock.pnpm.version -or
     $build.Value.marketVersion -ne $runtimeLock.market.version -or
@@ -148,6 +155,7 @@ $licenseSources = [ordered]@{
     'plugin-third-party-licenses.json' = Join-Path $projectRoot 'src-tauri\resources\plugins\third-party-licenses.json'
     'plugins.lock.json' = Join-Path $projectRoot 'plugins.lock.json'
     'THIRD_PARTY_NOTICES.md' = Join-Path $projectRoot 'THIRD_PARTY_NOTICES.md'
+    'RELEASE_NOTES.md' = Join-Path $projectRoot 'RELEASE_NOTES.md'
 }
 foreach ($source in $licenseSources.Values) {
     if (-not (Test-Path -LiteralPath $source -PathType Leaf)) { throw "Release license input is missing: $source" }
@@ -178,6 +186,7 @@ $pluginList = ($pluginLock.plugins | ForEach-Object { "$($_.package)@$($_.versio
 # Build Summary
 
 - Version: $($package.version)
+- Source commit: $sourceCommit
 - Target: Windows x64 NSIS payload preview
 - Node.js: $($runtimeLock.node.version)
 - @deepseek-ai/dsh: $($runtimeLock.dsh.version)
@@ -196,10 +205,11 @@ $pluginList = ($pluginLock.plugins | ForEach-Object { "$($_.package)@$($_.versio
 $stagedFiles = @(Get-ChildItem -LiteralPath $stagingRoot -File)
 foreach ($required in @(
     $publishedInstallerName, "$publishedInstallerName.sha256", 'payload-manifest.json',
-    'payload-build-report.json', 'npm-audit.json', 'startup-comparison.json', 'upgrade-matrix.json',
+    'payload-build-report.json', 'npm-audit.json', 'pnpm-compatibility.json',
+    'payload-reproducibility.json', 'startup-comparison.json', 'upgrade-matrix.json',
     'release-gate.json', 'release-gate.md',
     'runtime-debug-symbols.zip', 'third-party-licenses.json', 'plugin-third-party-licenses.json',
-    'THIRD_PARTY_NOTICES.md', 'build-summary.md'
+    'plugins.lock.json', 'THIRD_PARTY_NOTICES.md', 'RELEASE_NOTES.md', 'build-summary.md'
 )) {
     if ($required -notin $stagedFiles.Name) { throw "Staged release artifact is missing: $required" }
 }

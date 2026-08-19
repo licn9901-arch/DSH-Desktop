@@ -1,6 +1,6 @@
 {
   "name": "@dsh-desktop/runtime-services",
-  "version": "0.1.0-preview.10",
+  "version": "0.1.0-preview.11",
   "type": "module",
   "main": "lib/index.js",
   "license": "MIT",

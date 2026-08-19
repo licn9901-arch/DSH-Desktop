@@ -32,7 +32,7 @@ async function fixture() {
           "@deepseek-ai/dsh-base",
           "@deepseek-ai/dsh-web-app",
           "dshmarket",
-          "@dsh-desktop/theme-settings",
+          "@dsh-desktop/settings",
           "dsh-at-file",
           "@omdsh-dev/dsh-genui",
           "user-plugin",
@@ -46,6 +46,15 @@ async function fixture() {
 
 afterEach(async () => {
   await Promise.all(directories.splice(0).map((directory) => rm(directory, { recursive: true, force: true })));
+});
+
+test("设置客户端只注册预置插件与 Hindsight 页面", async () => {
+  const client = await readFile(new URL("../lib/client.js", import.meta.url), "utf8");
+  assert(client.includes('id: "desktop-managed-plugins"'));
+  assert(client.includes('id: "desktop-memory"'));
+  assert(!client.includes('id: "desktop-theme"'));
+  assert(!client.includes('"web-ui.plugin.item"'));
+  assert(!client.includes('"theme.nav"'));
 });
 
 test("只接受 web profile 白名单，并保护基础 bundle", () => {

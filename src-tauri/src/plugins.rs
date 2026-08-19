@@ -21,7 +21,8 @@ const WEB_APP_BUNDLE: &str = "@deepseek-ai/dsh-web-app";
 const MARKET_BUNDLE: &str = "dshmarket";
 const MARKET_RUNTIME_ALIAS: &str = "dshmarket-desktop";
 const RUNTIME_SERVICES_BUNDLE: &str = "@dsh-desktop/runtime-services";
-const DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/theme-settings";
+const DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/settings";
+const LEGACY_DESKTOP_SETTINGS_BUNDLE: &str = "@dsh-desktop/theme-settings";
 const LEGACY_SKINS_BUNDLE: &str = "@linxin666/dsh-skins";
 const SKIN_CENTER_BUNDLE: &str = "@linxin666/dsh-client-ui-skin-center";
 const LEGACY_SKILLS_MCP_BUNDLE: &str = "@zebbkira/dsh-skills-mcp-manager";
@@ -531,10 +532,28 @@ impl PluginManager {
             let Some(record) = state.managed.get(package) else {
                 return Ok(false);
             };
+            let current_dependency = dependencies.get(package).and_then(Value::as_str);
+            let optional_plugin_removed = package != RUNTIME_SERVICES_BUNDLE
+                && lock.plugins.iter().any(|plugin| plugin.package == package)
+                && current_dependency.is_none()
+                && !record.bundle_enabled;
+            if optional_plugin_removed {
+                let link = self
+                    .web_profile
+                    .join("node_modules")
+                    .join(package_relative_path(package)?);
+                if record.version != version
+                    || record.link_target != target_text
+                    || bundles.contains(&package)
+                    || self.linker.target(&link)?.is_some()
+                {
+                    return Ok(false);
+                }
+                continue;
+            }
             if record.version != version
                 || record.link_target != target_text
-                || dependencies.get(package).and_then(Value::as_str)
-                    != Some(expected_dependency.as_str())
+                || current_dependency != Some(expected_dependency.as_str())
                 || self
                     .linker
                     .target(
@@ -1488,6 +1507,35 @@ fn plan_profile(
             })
         });
 
+    // 旧设置包存在且仍由桌面管理时原位迁移；已经被用户删除或接管时保持原状，
+    // 避免升级重新安装用户明确卸载的可选设置界面。
+    let legacy_settings_dependency = dependency_values
+        .get(LEGACY_DESKTOP_SETTINGS_BUNDLE)
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    let legacy_settings_record = state.managed.get(LEGACY_DESKTOP_SETTINGS_BUNDLE);
+    let legacy_settings_owned = legacy_settings_record
+        .zip(legacy_settings_dependency.as_deref())
+        .is_some_and(|(record, dependency)| dependency == link_spec(&record.link_target));
+    let legacy_settings_enabled = legacy_settings_owned.then(|| {
+        let enabled = current_bundles
+            .iter()
+            .any(|bundle| bundle == LEGACY_DESKTOP_SETTINGS_BUNDLE);
+        dependency_values.remove(LEGACY_DESKTOP_SETTINGS_BUNDLE);
+        current_bundles.retain(|bundle| bundle != LEGACY_DESKTOP_SETTINGS_BUNDLE);
+        removed_packages.push(LEGACY_DESKTOP_SETTINGS_BUNDLE.to_owned());
+        enabled
+    });
+    let suppress_new_settings = if legacy_settings_owned {
+        false
+    } else if legacy_settings_record.is_some() && legacy_settings_dependency.is_none() {
+        current_bundles.retain(|bundle| bundle != LEGACY_DESKTOP_SETTINGS_BUNDLE);
+        removed_packages.push(LEGACY_DESKTOP_SETTINGS_BUNDLE.to_owned());
+        true
+    } else {
+        legacy_settings_dependency.is_some()
+    };
+
     // 0.2 起 Skin Center 自身携带全部皮肤；仅迁移仍由桌面 marker 持有的旧聚合载具，
     // 并把用户原先对主题插件的启用状态转交给新的独立 bundle。
     let legacy_skin_enabled = state.managed.get(LEGACY_SKINS_BUNDLE).and_then(|record| {
@@ -1517,6 +1565,18 @@ fn plan_profile(
     for plugin in &lock.plugins {
         let target = store_node_modules.join(package_relative_path(&plugin.package)?);
         let target_text = normalized_path(&target);
+        if plugin.package == DESKTOP_SETTINGS_BUNDLE && suppress_new_settings {
+            current_bundles.retain(|bundle| bundle != DESKTOP_SETTINGS_BUNDLE);
+            next_state.managed.insert(
+                plugin.package.clone(),
+                ManagedPluginState {
+                    version: plugin.version.clone(),
+                    link_target: target_text,
+                    bundle_enabled: false,
+                },
+            );
+            continue;
+        }
         let previous = state.managed.get(&plugin.package);
         let current_dependency = dependency_values
             .get(&plugin.package)
@@ -1527,10 +1587,27 @@ fn plan_profile(
         let matches_current_store =
             current_dependency.is_some_and(|dependency| dependency == link_spec(&target_text));
 
-        // marker 已存在但依赖被用户删除，或依赖被替换为其他来源，都视为用户接管。
+        // 可选插件依赖被删除时保留卸载 marker，避免下一次升级将其误判为首次安装。
+        if current_dependency.is_none()
+            && previous.is_some()
+            && plugin.package != RUNTIME_SERVICES_BUNDLE
+        {
+            current_bundles.retain(|bundle| bundle != &plugin.package);
+            next_state.managed.insert(
+                plugin.package.clone(),
+                ManagedPluginState {
+                    version: plugin.version.clone(),
+                    link_target: target_text,
+                    bundle_enabled: false,
+                },
+            );
+            removed_packages.push(plugin.package.clone());
+            continue;
+        }
+
+        // 依赖被替换为其他来源时视为用户接管；Runtime Services 缺失时必须恢复。
         if current_dependency.is_some() && previous.is_none() && !matches_current_store
             || current_dependency.is_some() && previous.is_some() && !was_owned
-            || current_dependency.is_none() && previous.is_some()
         {
             continue;
         }
@@ -1539,10 +1616,10 @@ fn plan_profile(
             plugin.package.clone(),
             Value::String(link_spec(&target_text)),
         );
-        let bundle_enabled = if [RUNTIME_SERVICES_BUNDLE, DESKTOP_SETTINGS_BUNDLE]
-            .contains(&plugin.package.as_str())
-        {
+        let bundle_enabled = if plugin.package == RUNTIME_SERVICES_BUNDLE {
             true
+        } else if plugin.package == DESKTOP_SETTINGS_BUNDLE && legacy_settings_enabled.is_some() {
+            legacy_settings_enabled.unwrap_or(true)
         } else if plugin.package == SKIN_CENTER_BUNDLE && legacy_skin_enabled.is_some() {
             legacy_skin_enabled.unwrap_or(true)
         } else if plugin.package == SKILLS_MCP_BUNDLE && legacy_skills_enabled.is_some() {
@@ -1891,13 +1968,13 @@ mod tests {
     use serde_json::{json, Value};
 
     use super::{
-        copy_physical_tree, normalized_path, package_relative_path, plan_managed_skill,
+        copy_physical_tree, link_spec, normalized_path, package_relative_path, plan_managed_skill,
         plan_profile, repair_legacy_skin_patch_content, sha256_hex, DirectoryLinker,
         ManagedPluginState, ManagedSkill, ManagedSkillAction, ManagedSkillState,
         PluginInstallState, PluginLock, PluginManager, BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE,
-        LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE, LEGACY_SKINS_BUNDLE, MARKET_BUNDLE,
-        MARKET_RUNTIME_ALIAS, RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, SKIN_CENTER_BUNDLE,
-        WEB_APP_BUNDLE,
+        LEGACY_DESKTOP_SETTINGS_BUNDLE, LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE,
+        LEGACY_SKINS_BUNDLE, MARKET_BUNDLE, MARKET_RUNTIME_ALIAS, RUNTIME_SERVICES_BUNDLE,
+        SKILLS_MCP_BUNDLE, SKIN_CENTER_BUNDLE, WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {
@@ -1910,11 +1987,11 @@ mod tests {
                 {"package":"dsh-at-file","version":"0.6.0","bundleId":"dsh-at-file","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"@omdsh-dev/dsh-genui","version":"0.8.4","bundleId":"genui","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
                 {"package":"dsh-better-sidebar","version":"0.12.2","bundleId":"better-sidebar","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["lib/index.js"]},
-                {"package":"@dsh-desktop/theme-settings","version":"0.1.0","bundleId":"desktop-theme-settings","license":"MIT","source":{"type":"local","path":"desktop-plugins/theme-settings"},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]},
+                {"package":"@dsh-desktop/settings","version":"0.1.0","bundleId":"desktop-settings","license":"MIT","source":{"type":"local","path":"desktop-plugins/settings"},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml"]},
                 {"package":"@linxin666/dsh-client-ui-skin-center","version":"0.2.2","bundleId":"ui-skin-center","license":"Apache-2.0","source":{"type":"npm","integrity":"sha512-+yxMKY6ljKoJsvNYbKn6BxOXKFbXDFRTI4UKCMfiG13VwNpsqvpQC7GjL/mYbNn8joolEWlHgSdhuKAS+J4bGg=="},"requiredFiles":["lib/index.js","lib/client.js","cordis.patch.yml","skins"]},
                 {"package":"@vectorize-io/hindsight-coding-agents","version":"0.3.4","bundleId":"hindsight-coding-agents","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dist/dsh.js"]},
                 {"package":"@liustack/modlens","version":"3.16.7","bundleId":"modlens","license":"MIT","source":{"type":"npm","integrity":"sha512-iKOgZ1auSGj2TyIjsS2nDqYiHrGWHUg08CxcIzgnkRjDyCjb/qjpt6W3cMLAj4KxTD2643+E7dg3nikClO0Esg=="},"requiredFiles":["dsh/index.js"]},
-                {"package":"@cubee-slide/skills-mcp-manager","version":"0.2.3","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="},"requiredFiles":["lib/index.js"]}
+                {"package":"@cubee-slide/skills-mcp-manager","version":"0.2.4","bundleId":"skills-mcp-manager","license":"MIT","source":{"type":"npm","integrity":"sha512-N94gaY8ropqRNCKKO3Ff4IFIQu+EcbKC3Vrl9WFzlGxb1QnJq6H8TVMyVJaM/ir+6riuML2A2YxcBVsQeQbFAw=="},"requiredFiles":["lib/index.js"]}
               ],
               "transitivePackages": [],
               "skills":[{"name":"genui","sourcePackage":"@omdsh-dev/dsh-genui","sourceFile":"SKILL.md","version":"0.8.4","sha256":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}]
@@ -2018,7 +2095,7 @@ mod tests {
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
-                "@dsh-desktop/theme-settings",
+                DESKTOP_SETTINGS_BUNDLE,
                 SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
@@ -2196,7 +2273,7 @@ mod tests {
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
-                "@dsh-desktop/theme-settings",
+                DESKTOP_SETTINGS_BUNDLE,
                 SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
@@ -2288,7 +2365,7 @@ mod tests {
                 "dsh-at-file",
                 "@omdsh-dev/dsh-genui",
                 "dsh-better-sidebar",
-                "@dsh-desktop/theme-settings",
+                DESKTOP_SETTINGS_BUNDLE,
                 SKIN_CENTER_BUNDLE,
                 "@vectorize-io/hindsight-coding-agents",
                 "@liustack/modlens",
@@ -2335,7 +2412,7 @@ mod tests {
     }
 
     #[test]
-    fn newly_managed_plugin_disable_survives_upgrade_but_control_bundle_is_restored() {
+    fn optional_plugin_and_settings_disable_survive_upgrade() {
         let store = Path::new(r"C:\managed\node_modules");
         let mut managed = BTreeMap::new();
         for package in [
@@ -2363,7 +2440,7 @@ mod tests {
         let profile = json!({
           "dependencies": {
             "@vectorize-io/hindsight-coding-agents": "link:C:/managed/node_modules/@vectorize-io/hindsight-coding-agents",
-            "@dsh-desktop/theme-settings": "link:C:/managed/node_modules/@dsh-desktop/theme-settings"
+            "@dsh-desktop/settings": "link:C:/managed/node_modules/@dsh-desktop/settings"
           },
           "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE]}}
         });
@@ -2371,10 +2448,190 @@ mod tests {
         let active = bundles(&plan.profile);
 
         assert!(!active.contains(&"@vectorize-io/hindsight-coding-agents"));
-        assert!(active.contains(&DESKTOP_SETTINGS_BUNDLE));
+        assert!(!active.contains(&DESKTOP_SETTINGS_BUNDLE));
         assert!(!plan.next_state.managed["@vectorize-io/hindsight-coding-agents"].bundle_enabled);
-        assert!(plan.next_state.managed[DESKTOP_SETTINGS_BUNDLE].bundle_enabled);
+        assert!(!plan.next_state.managed[DESKTOP_SETTINGS_BUNDLE].bundle_enabled);
         assert!(active.contains(&RUNTIME_SERVICES_BUNDLE));
+        assert!(plan.next_state.managed[RUNTIME_SERVICES_BUNDLE].bundle_enabled);
+    }
+
+    #[test]
+    fn legacy_settings_present_migrates_to_optional_settings_package() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let old_target = r"C:\old\node_modules\@dsh-desktop\theme-settings";
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed: BTreeMap::from([(
+                LEGACY_DESKTOP_SETTINGS_BUNDLE.to_owned(),
+                ManagedPluginState {
+                    version: "0.1.0-preview.10".to_owned(),
+                    link_target: old_target.to_owned(),
+                    bundle_enabled: true,
+                },
+            )]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dependencies": {"@dsh-desktop/theme-settings": link_spec(old_target)},
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE, LEGACY_DESKTOP_SETTINGS_BUNDLE]}}
+        });
+
+        let plan = plan_profile(profile, &state, &lock(), store, "new").unwrap();
+
+        assert_eq!(plan.removed_packages, vec![LEGACY_DESKTOP_SETTINGS_BUNDLE]);
+        assert!(plan.profile["dependencies"]
+            .get(LEGACY_DESKTOP_SETTINGS_BUNDLE)
+            .is_none());
+        assert!(plan.profile["dependencies"][DESKTOP_SETTINGS_BUNDLE]
+            .as_str()
+            .unwrap()
+            .starts_with("link:"));
+        assert!(bundles(&plan.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+    }
+
+    #[test]
+    fn legacy_settings_deleted_by_user_stays_uninstalled() {
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed: BTreeMap::from([(
+                LEGACY_DESKTOP_SETTINGS_BUNDLE.to_owned(),
+                ManagedPluginState {
+                    version: "0.1.0-preview.10".to_owned(),
+                    link_target: r"C:\old\node_modules\@dsh-desktop\theme-settings".to_owned(),
+                    bundle_enabled: true,
+                },
+            )]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE, LEGACY_DESKTOP_SETTINGS_BUNDLE]}}
+        });
+
+        let plan = plan_profile(
+            profile,
+            &state,
+            &lock(),
+            Path::new(r"C:\managed\node_modules"),
+            "new",
+        )
+        .unwrap();
+
+        assert!(!plan.next_state.managed[DESKTOP_SETTINGS_BUNDLE].bundle_enabled);
+        assert!(plan.profile["dependencies"]
+            .get(DESKTOP_SETTINGS_BUNDLE)
+            .is_none());
+        assert!(!bundles(&plan.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+        assert!(!bundles(&plan.profile).contains(&LEGACY_DESKTOP_SETTINGS_BUNDLE));
+
+        let repeated = plan_profile(
+            plan.profile,
+            &plan.next_state,
+            &lock(),
+            Path::new(r"C:\managed\node_modules"),
+            "next",
+        )
+        .unwrap();
+        assert!(repeated.profile["dependencies"]
+            .get(DESKTOP_SETTINGS_BUNDLE)
+            .is_none());
+        assert!(!bundles(&repeated.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+    }
+
+    #[test]
+    fn current_settings_deleted_by_user_stays_uninstalled_on_repeated_coordination() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let target = normalized_path(&store.join("@dsh-desktop/settings"));
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed: BTreeMap::from([(
+                DESKTOP_SETTINGS_BUNDLE.to_owned(),
+                ManagedPluginState {
+                    version: "0.1.0-preview.10".to_owned(),
+                    link_target: target,
+                    bundle_enabled: true,
+                },
+            )]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE]}}
+        });
+
+        let first = plan_profile(profile, &state, &lock(), store, "new").unwrap();
+        assert!(first.profile["dependencies"]
+            .get(DESKTOP_SETTINGS_BUNDLE)
+            .is_none());
+        assert!(!bundles(&first.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+
+        let repeated =
+            plan_profile(first.profile, &first.next_state, &lock(), store, "next").unwrap();
+        assert!(repeated.profile["dependencies"]
+            .get(DESKTOP_SETTINGS_BUNDLE)
+            .is_none());
+        assert!(!bundles(&repeated.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+    }
+
+    #[test]
+    fn non_managed_settings_package_is_preserved_without_desktop_takeover() {
+        let profile = json!({
+          "dependencies": {DESKTOP_SETTINGS_BUNDLE: "workspace:../user-settings"},
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE, DESKTOP_SETTINGS_BUNDLE]}}
+        });
+
+        let plan = plan_profile(
+            profile,
+            &PluginInstallState::default(),
+            &lock(),
+            Path::new(r"C:\managed\node_modules"),
+            "new",
+        )
+        .unwrap();
+
+        assert_eq!(
+            plan.profile["dependencies"][DESKTOP_SETTINGS_BUNDLE],
+            "workspace:../user-settings"
+        );
+        assert!(bundles(&plan.profile).contains(&DESKTOP_SETTINGS_BUNDLE));
+        assert!(!plan
+            .next_state
+            .managed
+            .contains_key(DESKTOP_SETTINGS_BUNDLE));
+    }
+
+    #[test]
+    fn missing_runtime_services_dependency_is_always_restored() {
+        let store = Path::new(r"C:\managed\node_modules");
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed: BTreeMap::from([(
+                RUNTIME_SERVICES_BUNDLE.to_owned(),
+                ManagedPluginState {
+                    version: "0.1.0-preview.10".to_owned(),
+                    link_target: r"C:\old\runtime-services".to_owned(),
+                    bundle_enabled: false,
+                },
+            )]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dsh": {"profile": {"bundles": [BASE_BUNDLE, MARKET_BUNDLE]}}
+        });
+
+        let plan = plan_profile(profile, &state, &lock(), store, "new").unwrap();
+
+        assert!(plan.profile["dependencies"][RUNTIME_SERVICES_BUNDLE]
+            .as_str()
+            .unwrap()
+            .starts_with("link:"));
+        assert!(bundles(&plan.profile).contains(&RUNTIME_SERVICES_BUNDLE));
         assert!(plan.next_state.managed[RUNTIME_SERVICES_BUNDLE].bundle_enabled);
     }
 

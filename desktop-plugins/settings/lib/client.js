@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: "@dsh-desktop/theme-settings",
+  id: "@dsh-desktop/settings",
   factory: (require) => {
     const module = { exports: {} };
     const exports = module.exports;
@@ -10,7 +10,7 @@ window.__ModuleLoader__.load({
     const inject = ["slots", "workspaces", "locale"];
     const API_PREFIX = "/api/desktop-managed-plugins";
     const MEMORY_API_PREFIX = "/api/desktop-hindsight";
-    const STYLE_ID = "@dsh-desktop/theme-settings/client.css";
+    const STYLE_ID = "@dsh-desktop/settings/client.css";
 
     if (document.querySelector(`style[data-plugin-css="${STYLE_ID}"]`) === null) {
       const style = document.createElement("style");
@@ -316,16 +316,7 @@ window.__ModuleLoader__.load({
       });
     }
 
-    /** 渲染上游 Skin Center 使用的子槽位，不复制其界面和 Host API。 */
-    function ThemeSettingsSection({ renderSlot }) {
-      return jsx("section", {
-        id: "desktop-theme",
-        "data-dsh-desktop-theme-settings": "",
-        children: renderSlot("web-ui.plugin.item", {}),
-      });
-    }
-
-    /** 注册桌面插件、项目记忆和主题入口，并声明 Skin Center 所需子槽位。 */
+    /** 注册桌面插件和项目记忆设置入口。 */
     function apply(ctx) {
       ctx.effect(
         () =>
@@ -365,7 +356,6 @@ window.__ModuleLoader__.load({
               "memory.saveError": "保存失败：{error}",
               "memory.testError": "连接失败：{error}",
               "memory.pickError": "目录选择失败：{error}",
-              "theme.nav": "主题",
             },
             en: {
               "plugins.nav": "Bundled plugins",
@@ -402,7 +392,6 @@ window.__ModuleLoader__.load({
               "memory.saveError": "Could not save: {error}",
               "memory.testError": "Connection failed: {error}",
               "memory.pickError": "Directory picker failed: {error}",
-              "theme.nav": "Themes",
             },
           }),
         "desktop-settings: dictionaries",
@@ -432,22 +421,6 @@ window.__ModuleLoader__.load({
             locale: NS,
           },
           ManagedPluginsSection,
-        );
-        yield ctx.slots.register(
-          {
-            name: "settings.section",
-            id: "desktop-theme",
-            order: 18,
-            label: () => t("theme.nav"),
-            locale: NS,
-            children: {
-              "web-ui.plugin.item": {
-                kind: "list",
-                scope: "root",
-              },
-            },
-          },
-          ThemeSettingsSection,
         );
       });
     }

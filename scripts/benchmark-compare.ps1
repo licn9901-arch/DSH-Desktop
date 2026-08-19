@@ -11,6 +11,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'release-installer-isolation.ps1')
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $defaultOutput = Join-Path $repoRoot ".release-work\$($package.version)\reports\startup-comparison.json"
 $reportPath = if ([string]::IsNullOrWhiteSpace($Output)) {
@@ -282,9 +284,10 @@ try {
     $passed = $payloadP95 -le $limit
     $cpu = try { (Get-CimInstance Win32_Processor | Select-Object -First 1 -ExpandProperty Name).Trim() } catch { $env:PROCESSOR_IDENTIFIER }
     $report = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         generatedAtUtc = [DateTime]::UtcNow.ToString('O')
         desktopVersion = $package.version
+        sourceCommit = $sourceCommit
         environment = [ordered]@{
             windowsVersion = [Environment]::OSVersion.VersionString
             cpu = $cpu

@@ -189,10 +189,11 @@ $keyInputs = @(
     'src-tauri\src\payload.rs',
     'src-tauri\examples\payload-tool.rs',
     'rust-toolchain.toml',
-        'scripts\stage-runtime.ps1',
-        'scripts\stage-plugins.ps1',
-        'scripts\optimize-plugin-previews.mjs',
-        'scripts\stage-payload.ps1'
+    'scripts\stage-runtime.ps1',
+    'scripts\patch-directory-picker.ps1',
+    'scripts\stage-plugins.ps1',
+    'scripts\optimize-plugin-previews.mjs',
+    'scripts\stage-payload.ps1'
 )
 $keyLines = @(
     'platform=win32-x64',

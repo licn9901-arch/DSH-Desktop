@@ -6,13 +6,12 @@ const API_PREFIX = "/api/desktop-managed-plugins";
 const HINDSIGHT_API_PREFIX = "/api/desktop-hindsight";
 const HINDSIGHT_CREDENTIAL_REF = "DSH_DESKTOP_HINDSIGHT_API_TOKEN";
 const HINDSIGHT_CLOUD_URL = "https://api.hindsight.vectorize.io";
-const CONTROL_BUNDLE = "@dsh-desktop/theme-settings";
+const CONTROL_BUNDLE = "@dsh-desktop/settings";
 const PROTECTED_BUNDLES = new Set([
   "@deepseek-ai/dsh-base",
   "@deepseek-ai/dsh-web-app",
   "dshmarket",
   "@dsh-desktop/runtime-services",
-  CONTROL_BUNDLE,
 ]);
 const MANAGED_PLUGINS = Object.freeze([
   { package: "dsh-at-file", label: "@ 文件引用" },
@@ -460,9 +459,9 @@ function apply(ctx) {
         handler: (req, res) => route.handler(req, res, ctx),
       }));
       return () => disposers.forEach((dispose) => dispose());
-    }, "desktop-theme-settings: managed plugin routes");
+    }, "desktop-settings: managed plugin routes");
   } catch (error) {
-    console.error("[desktop-theme-settings] route registration failed:", error);
+    console.error("[desktop-settings] route registration failed:", error);
   }
 }
 

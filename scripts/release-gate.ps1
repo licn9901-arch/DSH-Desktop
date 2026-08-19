@@ -7,10 +7,12 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'release-installer-isolation.ps1')
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $runtimeLock = Get-Content -LiteralPath (Join-Path $repoRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
-$match = [regex]::Match($package.version, '^0\.1\.0-preview\.(8|9|10)$')
-if (-not $match.Success) { throw "Release gate only accepts preview.8 through preview.10, got $($package.version)." }
+$match = [regex]::Match($package.version, '^0\.1\.0-preview\.(8|9|10|11)$')
+if (-not $match.Success) { throw "Release gate only accepts preview.8 through preview.11, got $($package.version)." }
 $preview = [int]$match.Groups[1].Value
 $reportRoot = Join-Path $repoRoot ".release-work\$($package.version)\reports"
 $jsonPath = Join-Path $reportRoot 'release-gate.json'
@@ -32,10 +34,25 @@ function Resolve-GateFile {
 # 验证前序公开 payload preview 已完成同一套门禁。
 function Assert-PreviousPreviewPassed {
     param([Parameter(Mandatory = $true)][int]$Number)
-    $path = Join-Path $repoRoot ".release-work\0.1.0-preview.$Number\reports\release-gate.json"
+    $path = Join-Path $repoRoot ".deploy-artifacts\0.1.0-preview.$Number\release-gate.json"
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Previous preview gate report is missing: $path" }
     $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
     if (-not $report.passed) { throw "Previous preview.$Number release gate did not pass." }
+    if ($report.desktopVersion -ne "0.1.0-preview.$Number") {
+        throw "Previous preview.$Number release report version mismatch: $($report.desktopVersion)"
+    }
+    return $report
+}
+
+# 要求当前门禁消费的报告来自同一版本和同一 Git 提交。
+function Assert-CurrentReleaseReport {
+    param([Parameter(Mandatory = $true)][string]$Name)
+    $path = Join-Path $reportRoot $Name
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Current release report is missing: $path" }
+    $report = Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+    if ($report.desktopVersion -ne $package.version -or $report.sourceCommit -ne $sourceCommit) {
+        throw "Current release report identity mismatch: $Name"
+    }
 }
 
 $legacyPath = Resolve-GateFile $LegacyInstaller
@@ -52,14 +69,23 @@ if ($runtimeLock.pnpm.version -ne '10.34.5' -or
 if ($preview -le 9 -and $package.scripts.build -ne 'npm run build:legacy') {
     throw "preview.$preview must keep npm run build on legacy."
 }
-if ($preview -eq 10 -and $package.scripts.build -ne 'npm run build:payload') {
-    throw 'preview.10 must switch npm run build to payload.'
+if ($preview -ge 10 -and $package.scripts.build -ne 'npm run build:payload') {
+    throw "preview.$preview must use npm run build:payload."
 }
 if ($preview -ge 9 -and $null -eq $previousPayloadPath) {
     throw "preview.$preview requires -PreviousPayloadInstaller."
 }
-if ($preview -ge 9) { Assert-PreviousPreviewPassed 8 }
-if ($preview -ge 10) { Assert-PreviousPreviewPassed 9 }
+$previousReports = @{}
+if ($preview -ge 9) {
+    foreach ($number in 8..($preview - 1)) {
+        $previousReports[$number] = Assert-PreviousPreviewPassed $number
+    }
+    $previousPayloadHash = (Get-FileHash -LiteralPath $previousPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    $expectedPreviousHash = $previousReports[$preview - 1].installers.payload.sha256
+    if ($previousPayloadHash -ne $expectedPreviousHash) {
+        throw "preview.$($preview - 1) installer hash does not match its finalized gate report."
+    }
+}
 
 $phases = @()
 
@@ -91,6 +117,14 @@ $failure = $null
 $totalWatch = [System.Diagnostics.Stopwatch]::StartNew()
 Push-Location $repoRoot
 try {
+    try {
+        Assert-DshReleaseWorktreeClean -RepoRoot $repoRoot
+        $phases += [pscustomobject]@{ name = 'gitWorktreeClean'; command = 'git status --porcelain=v1 --untracked-files=all'; exitCode = 0; durationMs = 0; passed = $true }
+    }
+    catch {
+        $phases += [pscustomobject]@{ name = 'gitWorktreeClean'; command = 'git status --porcelain=v1 --untracked-files=all'; exitCode = 1; durationMs = 0; passed = $false }
+        throw
+    }
     $isolationConflicts = @(Get-DshInstallerUserStateConflicts)
     if ($isolationConflicts.Count -gt 0) {
         $phases += [pscustomobject]@{ name = 'installerIsolationPreflight'; command = 'process, HKCU and shortcut inspection'; exitCode = 1; durationMs = 0; passed = $false }
@@ -120,6 +154,11 @@ try {
         '-LegacyInstaller', $legacyPath, '-PayloadInstaller', $payloadPath,
         '-WarmPairs', '20', '-ColdRuns', '3', '-TimeoutSeconds', '180'
     )
+    foreach ($reportName in @(
+        'payload-build-report.json', 'npm-audit.json', 'pnpm-compatibility.json',
+        'payload-reproducibility.json', 'upgrade-matrix.json', 'startup-comparison.json'
+    )) { Assert-CurrentReleaseReport $reportName }
+    $phases += [pscustomobject]@{ name = 'reportIdentity'; command = 'version and sourceCommit comparison'; exitCode = 0; durationMs = 0; passed = $true }
     $passed = $true
 }
 catch {
@@ -129,9 +168,10 @@ finally {
     Pop-Location
     $totalWatch.Stop()
     $report = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         generatedAtUtc = [DateTime]::UtcNow.ToString('O')
         desktopVersion = $package.version
+        sourceCommit = $sourceCommit
         previewNumber = $preview
         installers = [ordered]@{
             legacy = [ordered]@{ path = $legacyPath; sha256 = $legacyHash }
@@ -159,6 +199,7 @@ finally {
 # Release Gate $($package.version)
 
 - Status: $status
+- Source commit: $sourceCommit
 - pnpm: $($runtimeLock.pnpm.version)
 - Legacy baseline SHA-256: $legacyHash
 - Payload installer SHA-256: $((Get-FileHash -LiteralPath $payloadPath -Algorithm SHA256).Hash.ToLowerInvariant())

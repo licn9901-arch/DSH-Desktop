@@ -2,6 +2,8 @@ param([string]$Output)
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot ".release-work\$($package.version)"))
 $reportPath = if ([string]::IsNullOrWhiteSpace($Output)) {
@@ -47,9 +49,10 @@ foreach ($name in $names) {
     }
 }
 $report = [ordered]@{
-    schemaVersion = 1
+    schemaVersion = 2
     generatedAtUtc = [DateTime]::UtcNow.ToString('O')
     desktopVersion = $package.version
+    sourceCommit = $sourceCommit
     compression = [ordered]@{ method = 'Deflate'; level = 6; sortedPaths = $true; fixedTimestamp = $true }
     runs = @($first, $second)
     mismatches = $mismatches

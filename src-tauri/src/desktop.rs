@@ -153,7 +153,7 @@ fn show_about(app: &AppHandle) {
     let _ = app
         .dialog()
         .message(format!(
-            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6、DSH Market 1.10.0、pnpm 10.34.5\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skins 0.1.17、Hindsight 0.3.4、ModLens 3.16.7、Skills/MCP 0.2.3\n\n第三方插件与桌面应用拥有相同主机权限，目前没有签名验证、权限清单或进程级沙箱。",
+            "DeepSeek Harness Desktop {}\n\n社区项目，非 DeepSeek 官方产品。\n\n内置 DSH 0.1.0-rc.6、DSH Market 1.10.0、pnpm 10.34.5\n插件：At File 0.6.0、GenUI 0.8.4、Better Sidebar 0.12.2、Skin Center 0.2.2、Hindsight 0.3.4、ModLens 3.16.7、Skills/MCP 0.2.4\n\n第三方插件与桌面应用拥有相同主机权限，目前没有签名验证、权限清单或进程级沙箱。",
             app.package_info().version
         ))
         .title("关于 DeepSeek Harness Desktop")

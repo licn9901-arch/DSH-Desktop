@@ -99,6 +99,12 @@ finally {
     Pop-Location
 }
 
+# 上游 rc.6 未给 IFileDialog 传 owner；打包时固定补丁，避免 Node 作为独立任务栏窗口出现。
+& (Join-Path $PSScriptRoot 'patch-directory-picker.ps1') -HostRoot $hostResourceRoot
+if ($LASTEXITCODE -ne 0) {
+    throw "Directory picker patch failed with exit code $LASTEXITCODE."
+}
+
 # 唯一 shim 只改变本次 Market 子进程的 PATH，不修改 profile store 或用户全局 pnpm。
 $toolchainSource = Join-Path $runtimeHostRoot 'toolchains'
 $toolchainTarget = Assert-ProjectPath (Join-Path $hostResourceRoot 'toolchains')

@@ -9,6 +9,8 @@ param(
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'release-installer-isolation.ps1')
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $runtimeLock = Get-Content -LiteralPath (Join-Path $repoRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
 $defaultOutput = Join-Path $repoRoot ".release-work\$($package.version)\reports\upgrade-matrix.json"
@@ -131,6 +133,43 @@ function Get-RuntimeState {
     $path = Join-Path $Context.RuntimeRoot 'runtime-state.json'
     if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Runtime state is missing: $path" }
     return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+}
+
+# 读取隔离 DSH_HOME 中的 web profile，供设置插件升级场景断言依赖与 bundle。
+function Get-MatrixWebProfile {
+    param([Parameter(Mandatory = $true)]$Context)
+    $path = Join-Path $Context.DshHome 'profiles\web\package.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Web profile is missing: $path" }
+    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+}
+
+# 写回测试专用 profile；只用于模拟用户在 preview.10 中卸载旧设置包。
+function Set-MatrixWebProfile {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)]$Profile
+    )
+    $path = Join-Path $Context.DshHome 'profiles\web\package.json'
+    $Profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
+}
+
+# 验证设置包的依赖和 bundle 状态，防止只改 dependency 或只改 activation 的半迁移。
+function Assert-MatrixSettingsState {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][bool]$ExpectedNewSettings
+    )
+    $profile = Get-MatrixWebProfile $Context
+    $hasLegacyDependency = $null -ne $profile.dependencies.PSObject.Properties['@dsh-desktop/theme-settings']
+    $hasNewDependency = $null -ne $profile.dependencies.PSObject.Properties['@dsh-desktop/settings']
+    $bundles = @($profile.dsh.profile.bundles)
+    if ($hasLegacyDependency -or '@dsh-desktop/theme-settings' -in $bundles) {
+        throw 'Legacy theme-settings remained after preview.11 coordination.'
+    }
+    if ($hasNewDependency -ne $ExpectedNewSettings -or
+        (('@dsh-desktop/settings' -in $bundles) -ne $ExpectedNewSettings)) {
+        throw "New settings state mismatch: expected=$ExpectedNewSettings dependency=$hasNewDependency"
+    }
 }
 
 # 运行完整桌面 smoke，使 candidate 通过真实 Host/plugins readiness 后晋升。
@@ -444,6 +483,46 @@ try {
                 }
             }
         }
+
+        Invoke-MatrixScenario 'payload-settings-migration' {
+            param($context)
+            Install-MatrixBuild $context $previousPayloadPath $true
+            Invoke-MatrixSmoke $context
+            $oldProfile = Get-MatrixWebProfile $context
+            if ($null -eq $oldProfile.dependencies.PSObject.Properties['@dsh-desktop/theme-settings']) {
+                throw 'Preview.10 fixture does not contain managed theme-settings.'
+            }
+            $hindsightPath = Join-Path $context.Root '.hindsight\coding-agent.json'
+            New-Item -ItemType Directory -Force -Path (Split-Path $hindsightPath -Parent) | Out-Null
+            $hindsightBytes = [Text.Encoding]::UTF8.GetBytes('{"apiUrl":"http://127.0.0.1:8888","custom":"preserve"}')
+            [IO.File]::WriteAllBytes($hindsightPath, $hindsightBytes)
+
+            Install-MatrixBuild $context $payloadPath $true
+            Invoke-MatrixSmoke $context
+            Assert-MatrixSettingsState $context $true
+            if ([Convert]::ToHexString([IO.File]::ReadAllBytes($hindsightPath)) -ne
+                [Convert]::ToHexString($hindsightBytes)) {
+                throw 'Settings migration changed existing Hindsight configuration bytes.'
+            }
+        }
+
+        Invoke-MatrixScenario 'payload-settings-uninstalled-upgrade' {
+            param($context)
+            Install-MatrixBuild $context $previousPayloadPath $true
+            Invoke-MatrixSmoke $context
+            $profile = Get-MatrixWebProfile $context
+            $profile.dependencies.PSObject.Properties.Remove('@dsh-desktop/theme-settings')
+            $profile.dsh.profile.bundles = @(
+                $profile.dsh.profile.bundles | Where-Object { $_ -ne '@dsh-desktop/theme-settings' }
+            )
+            Set-MatrixWebProfile $context $profile
+
+            Install-MatrixBuild $context $payloadPath $true
+            Invoke-MatrixSmoke $context
+            Assert-MatrixSettingsState $context $false
+            Invoke-MatrixSmoke $context
+            Assert-MatrixSettingsState $context $false
+        }
     }
     $matrixPassed = $true
 }
@@ -461,9 +540,10 @@ finally {
         [Environment]::SetEnvironmentVariable($name, $previousEnvironment[$name], 'Process')
     }
     $report = [ordered]@{
-        schemaVersion = 1
+        schemaVersion = 2
         generatedAtUtc = [DateTime]::UtcNow.ToString('O')
         desktopVersion = $package.version
+        sourceCommit = $sourceCommit
         installers = [ordered]@{
             legacy = [ordered]@{ version = '0.1.0-preview.7'; path = $legacyPath; sha256 = $baselineHash }
             payload = [ordered]@{ version = $package.version; path = $payloadPath; sha256 = $payloadHash }

@@ -23,6 +23,7 @@ $cliPath = Join-Path $hostRoot $runtimeLock.dsh.cliEntry
 $dshRoot = Join-Path $hostRoot 'node_modules\@deepseek-ai\dsh'
 $marketRoot = Join-Path $hostRoot 'node_modules\dshmarket'
 $pnpmRoot = Join-Path $hostRoot 'node_modules\pnpm'
+$directoryPickerWorker = Join-Path $hostRoot 'node_modules\@deepseek-ai\dsh-host-directory-picker-native\lib\worker.cjs'
 $policyPath = Join-Path $resourceRootPath 'policy\dsh-market.patch.yml'
 $webCandidates = @(
     (Join-Path $hostRoot 'node_modules\@deepseek-ai\dsh-web-frontend'),
@@ -53,12 +54,42 @@ $requiredFiles = @(
     (Join-Path $webRoot 'LICENSE'),
     (Join-Path $hostRoot 'package-lock.json'),
     (Join-Path $hostRoot 'THIRD_PARTY_NOTICES.md'),
-    (Join-Path $hostRoot 'third-party-licenses.json')
+    (Join-Path $hostRoot 'third-party-licenses.json'),
+    $directoryPickerWorker
 )
 foreach ($requiredFile in $requiredFiles) {
     if (-not (Test-Path -LiteralPath $requiredFile -PathType Leaf)) {
         throw "Bundled runtime file is missing: $requiredFile"
     }
+}
+
+$directoryPickerSource = Get-Content -LiteralPath $directoryPickerWorker -Raw
+foreach ($marker in @(
+    'DSH_DIRECTORY_PICKER_OWNER_HWND',
+    'dialog.show(ownerHwnd)',
+    'runFolderDialog(await loadWin32DialogBindings(), title, ownerHwnd'
+)) {
+    if (-not $directoryPickerSource.Contains($marker)) {
+        throw "Native directory picker owner-window patch is missing: $marker"
+    }
+}
+
+# 非法 owner 必须在加载 native dialog 前失败，避免截断或伪造 HWND。
+$previousDialogTitle = [Environment]::GetEnvironmentVariable('DSH_DIALOG_TITLE', 'Process')
+$previousDialogOwner = [Environment]::GetEnvironmentVariable('DSH_DIRECTORY_PICKER_OWNER_HWND', 'Process')
+try {
+    $env:DSH_DIALOG_TITLE = 'DSH directory picker verification'
+    $env:DSH_DIRECTORY_PICKER_OWNER_HWND = 'not-a-window-handle'
+    $invalidOwnerOutput = (& $nodePath $directoryPickerWorker 2>&1) -join "`n"
+    $invalidOwnerExitCode = $LASTEXITCODE
+}
+finally {
+    [Environment]::SetEnvironmentVariable('DSH_DIALOG_TITLE', $previousDialogTitle, 'Process')
+    [Environment]::SetEnvironmentVariable('DSH_DIRECTORY_PICKER_OWNER_HWND', $previousDialogOwner, 'Process')
+}
+if ($invalidOwnerExitCode -eq 0 -or
+    $invalidOwnerOutput -notmatch 'must be a positive decimal integer') {
+    throw "Native directory picker accepted an invalid owner HWND: exit=$invalidOwnerExitCode output=$invalidOwnerOutput"
 }
 
 # 两个资源分区都必须携带当前根锁文件，避免增量 staging 留下旧版本声明。

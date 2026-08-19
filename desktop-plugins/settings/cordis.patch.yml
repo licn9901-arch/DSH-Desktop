@@ -1,0 +1,4 @@
+# 桌面端仅声明可选设置插件；皮肤页面由独立 Skin Center 插件提供。
+- insert:
+    - id: desktop-settings
+      name: '@dsh-desktop/settings'

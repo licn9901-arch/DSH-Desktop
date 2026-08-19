@@ -35,7 +35,7 @@ $expectedOrder = @(
     'dsh-at-file',
     '@omdsh-dev/dsh-genui',
     'dsh-better-sidebar',
-    '@dsh-desktop/theme-settings',
+    '@dsh-desktop/settings',
     '@linxin666/dsh-client-ui-skin-center',
     '@vectorize-io/hindsight-coding-agents',
     '@liustack/modlens',
@@ -45,16 +45,21 @@ if (($lock.plugins.package -join '|') -ne ($expectedOrder -join '|')) {
     throw "Managed plugin order is invalid: $($lock.plugins.package -join ', ')"
 }
 
-$themeClient = Join-Path $resourceRootPath 'node_modules\@dsh-desktop\theme-settings\lib\client.js'
-$themeSource = Get-Content -LiteralPath $themeClient -Raw
-foreach ($marker in @('id: "desktop-theme"', '"web-ui.plugin.item"', 'renderSlot("web-ui.plugin.item"')) {
-    if (-not $themeSource.Contains($marker)) {
-        throw "Desktop theme adapter is missing required client marker: $marker"
+$settingsClient = Join-Path $resourceRootPath 'node_modules\@dsh-desktop\settings\lib\client.js'
+$settingsSource = Get-Content -LiteralPath $settingsClient -Raw
+foreach ($marker in @('id: "desktop-managed-plugins"', 'id: "desktop-memory"')) {
+    if (-not $settingsSource.Contains($marker)) {
+        throw "Desktop settings client is missing required marker: $marker"
     }
 }
-$themeHost = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\theme-settings\lib\index.js') -Raw
+foreach ($forbidden in @('id: "desktop-theme"', '"web-ui.plugin.item"', '"theme.nav"')) {
+    if ($settingsSource.Contains($forbidden)) {
+        throw "Desktop settings client still contains retired theme surface: $forbidden"
+    }
+}
+$settingsHost = Get-Content -LiteralPath (Join-Path $resourceRootPath 'node_modules\@dsh-desktop\settings\lib\index.js') -Raw
 foreach ($marker in @('/api/desktop-managed-plugins', 'PROTECTED_BUNDLES', 'atomicWriteProfile', 'serializeWrite')) {
-    if (-not $themeHost.Contains($marker)) {
+    if (-not $settingsHost.Contains($marker)) {
         throw "Desktop managed-plugin API is missing required host marker: $marker"
     }
 }

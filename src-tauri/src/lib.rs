@@ -210,7 +210,13 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
         }
     };
     let mut runtime = selection.primary;
-    app.manage(HostSupervisor::new());
+    #[cfg(windows)]
+    let directory_picker_owner = window.hwnd().ok().map(|hwnd| hwnd.0 as usize);
+    #[cfg(not(windows))]
+    let directory_picker_owner = None;
+    app.manage(HostSupervisor::with_directory_picker_owner(
+        directory_picker_owner,
+    ));
     let mut prevalidated_candidate = None;
     if runtime
         .activation
@@ -831,21 +837,91 @@ fn restart_host(
     handle.state::<HostSupervisor>().shutdown();
     repair_skin_patch_before_core_retry(runtime)?;
 
-    let receiver = start_host_streams(handle, runtime)?;
-    let (mut lifecycle, ready_url) =
-        await_host_ready(handle, &receiver, runtime.core_ready_timeout)?;
-    navigate_to_host(handle, host_origin, &ready_url)?;
-    await_plugins_ready(
-        handle,
-        &receiver,
-        &mut lifecycle,
-        runtime.plugin_ready_timeout,
+    let transaction = PluginManager::new(runtime).prepare()?;
+    let (receiver, lifecycle, ready_url) = coordinate_managed_restart(
+        transaction,
+        || {
+            let receiver = start_host_streams(handle, runtime)?;
+            let (mut lifecycle, ready_url) =
+                await_host_ready(handle, &receiver, runtime.core_ready_timeout)?;
+            navigate_to_host(handle, host_origin, &ready_url)?;
+            await_plugins_ready(
+                handle,
+                &receiver,
+                &mut lifecycle,
+                runtime.plugin_ready_timeout,
+            )?;
+            Ok((receiver, lifecycle, ready_url))
+        },
+        |plugin_error| {
+            log_error(&format!(
+                "managed plugin restart failed; restoring profile and retrying once: {plugin_error}"
+            ));
+            let _ = navigate_to_recovery(handle, host_origin);
+            handle.state::<HostSupervisor>().shutdown_for_recovery();
+            repair_skin_patch_before_core_retry(runtime)?;
+
+            let receiver = start_host_streams(handle, runtime)?;
+            let (mut lifecycle, ready_url) =
+                await_host_ready(handle, &receiver, runtime.core_ready_timeout)?;
+            navigate_to_host(handle, host_origin, &ready_url)?;
+            await_plugins_ready(
+                handle,
+                &receiver,
+                &mut lifecycle,
+                runtime.plugin_ready_timeout,
+            )?;
+            Ok((receiver, lifecycle, ready_url))
+        },
     )?;
     log_app(&format!(
         "host restart ready: pid={:?}, url={ready_url}",
         handle.state::<HostSupervisor>().pid()
     ));
     Ok((receiver, lifecycle))
+}
+
+/// 抽象重启使用的插件事务，使托盘重启顺序可以脱离 Tauri 窗口进行单元测试。
+trait RestartPluginTransaction {
+    /// Host 和插件全部就绪后提交本轮 profile 与链接修改。
+    fn commit(self) -> Result<(), String>;
+    /// Host 启动失败时恢复本轮 profile 与链接修改。
+    fn rollback(self) -> Result<(), String>;
+}
+
+impl RestartPluginTransaction for PluginTransaction {
+    fn commit(self) -> Result<(), String> {
+        PluginTransaction::commit(self)
+    }
+
+    fn rollback(self) -> Result<(), String> {
+        PluginTransaction::rollback(self)
+    }
+}
+
+/// 执行一次受管重启；失败时必须先完成插件回滚，再调用唯一一次恢复启动。
+fn coordinate_managed_restart<T, R, Start, Recover>(
+    transaction: T,
+    start: Start,
+    recover: Recover,
+) -> Result<R, String>
+where
+    T: RestartPluginTransaction,
+    Start: FnOnce() -> Result<R, String>,
+    Recover: FnOnce(&str) -> Result<R, String>,
+{
+    match start() {
+        Ok(ready) => {
+            transaction.commit()?;
+            Ok(ready)
+        }
+        Err(plugin_error) => {
+            transaction.rollback().map_err(|rollback| {
+                format!("{plugin_error}; plugin rollback failed: {rollback}")
+            })?;
+            recover(&plugin_error)
+        }
+    }
 }
 
 /// 将 WebView 切回内置恢复页，避免回滚时继续停留在即将失效的 Host 端口。
@@ -991,4 +1067,104 @@ fn fail(handle: &AppHandle, message: &str) {
         .title("DeepSeek Harness Desktop")
         .blocking_show();
     handle.exit(1);
+}
+
+#[cfg(test)]
+mod restart_tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::{coordinate_managed_restart, RestartPluginTransaction};
+
+    struct RecordingTransaction {
+        events: Arc<Mutex<Vec<&'static str>>>,
+        rollback_error: Option<String>,
+    }
+
+    impl RestartPluginTransaction for RecordingTransaction {
+        fn commit(self) -> Result<(), String> {
+            self.events.lock().unwrap().push("commit");
+            Ok(())
+        }
+
+        fn rollback(self) -> Result<(), String> {
+            self.events.lock().unwrap().push("rollback");
+            self.rollback_error.map_or(Ok(()), Err)
+        }
+    }
+
+    #[test]
+    fn managed_restart_commits_only_after_host_is_ready() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let transaction = RecordingTransaction {
+            events: events.clone(),
+            rollback_error: None,
+        };
+
+        let result = coordinate_managed_restart(
+            transaction,
+            || {
+                events.lock().unwrap().push("start");
+                Ok("ready")
+            },
+            |_| {
+                events.lock().unwrap().push("retry");
+                Ok("recovered")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result, "ready");
+        assert_eq!(*events.lock().unwrap(), vec!["start", "commit"]);
+    }
+
+    #[test]
+    fn managed_restart_rolls_back_before_single_recovery_retry() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let transaction = RecordingTransaction {
+            events: events.clone(),
+            rollback_error: None,
+        };
+
+        let result = coordinate_managed_restart(
+            transaction,
+            || {
+                events.lock().unwrap().push("start");
+                Err("plugins failed".to_owned())
+            },
+            |error| {
+                assert_eq!(error, "plugins failed");
+                events.lock().unwrap().push("retry");
+                Ok("recovered")
+            },
+        )
+        .unwrap();
+
+        assert_eq!(result, "recovered");
+        assert_eq!(*events.lock().unwrap(), vec!["start", "rollback", "retry"]);
+    }
+
+    #[test]
+    fn managed_restart_does_not_retry_when_rollback_fails() {
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let transaction = RecordingTransaction {
+            events: events.clone(),
+            rollback_error: Some("restore failed".to_owned()),
+        };
+
+        let error = coordinate_managed_restart(
+            transaction,
+            || Err::<(), _>("plugins failed".to_owned()),
+            |_| {
+                events.lock().unwrap().push("retry");
+                Ok(())
+            },
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error,
+            "plugins failed; plugin rollback failed: restore failed"
+        );
+        assert_eq!(*events.lock().unwrap(), vec!["rollback"]);
+    }
 }

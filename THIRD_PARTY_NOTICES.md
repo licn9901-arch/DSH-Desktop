@@ -16,7 +16,7 @@ The preview installer bundles the following third-party software:
 | `@linxin666/dsh-client-ui-skin-center` | 0.2.2 | Apache-2.0, <https://github.com/zhu1090093659/dsh-web-ui> |
 | `@vectorize-io/hindsight-coding-agents` | 0.3.4 | MIT, <https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents> |
 | `@liustack/modlens` | 3.16.7 | MIT, <https://github.com/liustack/modlens> |
-| `@cubee-slide/skills-mcp-manager` | 0.2.3 | MIT, <https://github.com/licn9901-arch/dsh-skills-mcp-manager> |
+| `@cubee-slide/skills-mcp-manager` | 0.2.4 | MIT, <https://github.com/licn9901-arch/dsh-skills-mcp-manager> |
 | Tauri | 2.x | Apache-2.0 OR MIT, <https://github.com/tauri-apps/tauri> |
 | esbuild | 0.28.2 | MIT, <https://github.com/evanw/esbuild> |
 | `zip` | 8.6.0 | MIT, <https://github.com/zip-rs/zip2> |

@@ -2,6 +2,9 @@ param()
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+. (Join-Path $PSScriptRoot 'release-source.ps1')
+Assert-DshReleaseWorktreeClean -RepoRoot $repoRoot
+$sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $runtimeLock = Get-Content -LiteralPath (Join-Path $repoRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
 $reportPath = Join-Path $repoRoot ".release-work\$($package.version)\reports\payload-build-report.json"
@@ -55,9 +58,10 @@ try {
     if ($installer.Length -gt 100MB) { throw "Payload installer exceeds 100 MiB: $($installer.Length) bytes." }
     $manifest = Get-Content -LiteralPath (Join-Path $repoRoot 'src-tauri\resources\payload\payload-manifest.json') -Raw | ConvertFrom-Json
     $report = [ordered]@{
-        schemaVersion = 2
+        schemaVersion = 3
         generatedAtUtc = [DateTime]::UtcNow.ToString('O')
         desktopVersion = $package.version
+        sourceCommit = $sourceCommit
         nodeVersion = $runtimeLock.node.version
         pnpmVersion = $runtimeLock.pnpm.version
         marketVersion = $runtimeLock.market.version

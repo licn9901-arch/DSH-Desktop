@@ -15,6 +15,7 @@ use crate::logger::{log_app, log_error};
 use crate::runtime::RuntimePaths;
 
 const HINDSIGHT_CREDENTIAL_REF: &str = "DSH_DESKTOP_HINDSIGHT_API_TOKEN";
+const DIRECTORY_PICKER_OWNER_ENV: &str = "DSH_DIRECTORY_PICKER_OWNER_HWND";
 
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
@@ -22,6 +23,7 @@ const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 /// 持有唯一 Host 子进程，供启动线程、退出回调和监视线程共享。
 pub struct HostSupervisor {
     child: Mutex<Option<Box<dyn ManagedChild>>>,
+    directory_picker_owner_hwnd: Option<usize>,
 }
 
 impl Default for HostSupervisor {
@@ -87,6 +89,15 @@ impl HostSupervisor {
     pub fn new() -> Self {
         Self {
             child: Mutex::new(None),
+            directory_picker_owner_hwnd: None,
+        }
+    }
+
+    /// 创建绑定桌面主窗口的 supervisor，使原生目录选择器不会显示为独立 Node 窗口。
+    pub fn with_directory_picker_owner(owner_hwnd: Option<usize>) -> Self {
+        Self {
+            child: Mutex::new(None),
+            directory_picker_owner_hwnd: owner_hwnd,
         }
     }
 
@@ -131,6 +142,7 @@ impl HostSupervisor {
             .env("PATH", host_path)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        configure_directory_picker_owner(&mut command, self.directory_picker_owner_hwnd);
         // 环境变量由部署平台显式提供时优先；否则桥接桌面凭据文件中的专用引用。
         if env::var_os("HINDSIGHT_API_TOKEN").is_none() {
             if let Some(token) = hindsight_token_from_credentials(&paths.dsh_home)? {
@@ -359,18 +371,28 @@ fn hide_console_window(command: &mut Command) {
 #[cfg(not(windows))]
 fn hide_console_window(_command: &mut Command) {}
 
+/// 只把当前桌面主窗口的非零句柄传给 Host，并阻止外部环境伪造目录选择器 owner。
+fn configure_directory_picker_owner(command: &mut Command, owner_hwnd: Option<usize>) {
+    command.env_remove(DIRECTORY_PICKER_OWNER_ENV);
+    if let Some(owner_hwnd) = owner_hwnd.filter(|value| *value != 0) {
+        command.env(DIRECTORY_PICKER_OWNER_ENV, owner_hwnd.to_string());
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::VecDeque;
+    use std::ffi::OsStr;
     use std::fs;
     use std::io;
+    use std::process::Command;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
     use super::{
-        build_host_path, hindsight_token_from_credentials, HostSupervisor, ManagedChild,
-        ProcessTreeTerminator,
+        build_host_path, configure_directory_picker_owner, hindsight_token_from_credentials,
+        HostSupervisor, ManagedChild, ProcessTreeTerminator, DIRECTORY_PICKER_OWNER_ENV,
     };
     use crate::runtime::RuntimePaths;
 
@@ -435,6 +457,7 @@ mod tests {
     fn supervisor(child: FakeChild) -> HostSupervisor {
         HostSupervisor {
             child: Mutex::new(Some(Box::new(child))),
+            directory_picker_owner_hwnd: None,
         }
     }
 
@@ -470,6 +493,28 @@ mod tests {
         };
         let error = HostSupervisor::spawn(&paths).err().unwrap();
         assert!(error.contains("failed to start Node"));
+    }
+
+    #[test]
+    fn directory_picker_owner_overrides_inherited_value_and_rejects_zero() {
+        let mut command = Command::new("node.exe");
+        command.env(DIRECTORY_PICKER_OWNER_ENV, "999");
+
+        configure_directory_picker_owner(&mut command, Some(42));
+        let configured = command
+            .get_envs()
+            .find(|(name, _)| *name == DIRECTORY_PICKER_OWNER_ENV)
+            .and_then(|(_, value)| value)
+            .map(OsStr::to_string_lossy)
+            .map(|value| value.into_owned());
+        assert_eq!(configured.as_deref(), Some("42"));
+
+        configure_directory_picker_owner(&mut command, Some(0));
+        let removed = command
+            .get_envs()
+            .find(|(name, _)| *name == DIRECTORY_PICKER_OWNER_ENV)
+            .map(|(_, value)| value.is_none());
+        assert_eq!(removed, Some(true));
     }
 
     #[test]

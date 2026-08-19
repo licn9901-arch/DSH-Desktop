@@ -29,7 +29,7 @@ Project website: [https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 Download the latest `DeepSeek Harness Desktop_*_x64-setup.exe` from
 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) and run the installer. Preview builds support only Windows 10 22H2 and Windows 11 on x64.
 
-`v0.1.0-preview.10` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
+`v0.1.0-preview.11` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
 Before running the installer, verify it against the matching `.sha256` file on the Release page.
 
 The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
@@ -48,7 +48,7 @@ The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 
 ## Bundled Plugins
 
-`v0.1.0-preview.10` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
+`v0.1.0-preview.11` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
 
 | Plugin | Version | Default behavior and permissions |
 |---|---:|---|
@@ -58,9 +58,9 @@ The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 | [`@linxin666/dsh-client-ui-skin-center`](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/skins/skin-center) | 0.2.2 | Ships every skin in one package without the retired `dsh-skins` carrier or the full Web UI suite; themes can be previewed, applied, and restored live without restarting the Host |
 | [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | The **Project Memory** settings page configures cloud or self-hosted services, credentials, and project opt-in; projects that are not enabled are neither recorded nor uploaded |
 | [`@liustack/modlens`](https://github.com/liustack/modlens) | 3.16.7 | Provides image reading and structured vision results; no API key, vision endpoint, or Agent CLI is preconfigured |
-| [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.3 | Long-term desktop-maintained build with a unified Skills/MCP interface and controls; MCP configuration is JSON-only, and `env`/`headers` are stored in plaintext at `~/.dsh/mcp.json` |
+| [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.4 | Long-term desktop-maintained build with Skin Center semantic theming and compact Skills/MCP controls; MCP configuration is JSON-only, and `env`/`headers` are stored in plaintext at `~/.dsh/mcp.json` |
 
-The desktop-owned `@dsh-desktop/theme-settings` package adds three top-level settings pages: **Bundled Plugins**, **Project Memory**, and **Themes**. **Bundled Plugins** toggles only allowlisted package bundles. It does not uninstall files, modify dependencies, or invoke pnpm. Changes take effect after selecting **Restart DSH Service** from the tray. Official bundles, Market, and the desktop control bundles cannot be disabled, and unknown user bundles are left unchanged.
+The desktop-owned `@dsh-desktop/settings` package provides the **Bundled Plugins** and **Project Memory** settings pages; themes now live exclusively in the independent **Skin Center**. The settings package is installed by default but may be uninstalled, and restarts or upgrades do not restore it. Reinstalling it reuses the existing user configuration. **Bundled Plugins** toggles only allowlisted package bundles. It does not uninstall files, modify dependencies, or invoke pnpm. Changes take effect after selecting **Restart DSH Service** from the tray. Official bundles, Market, and startup-critical components such as Runtime Services cannot be disabled, and unknown user bundles are left unchanged.
 
 On first launch, the pinned GenUI `SKILL.md` is written to `$DSH_HOME/skills/genui/SKILL.md` and applies only to DSH. An unmanaged file with the same name is never overwritten. An unmodified managed file follows desktop upgrades, while user edits or deletion are preserved.
 
@@ -182,7 +182,7 @@ Logs are stored at `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`.
 - Bundled plugin toggles: open **Settings > Bundled Plugins**. Restart DSH from the tray after saving changes.
 - Project memory: open **Settings > Project Memory**. Configure the service and token, enable only the projects that need memory, and restart DSH.
 - Skills and MCP: open **Settings > Skills & MCP**. Configure MCP services through the unified JSON editor.
-- Theme switching: open **Settings > Themes**. The desktop adapter provides this entry; Skin Center still owns the skin UI and Host API.
+- Theme switching: open the independent **Skin Center**. The settings package no longer registers the retired **Themes** page or a Skin Center container.
 - Tasks continue after the window closes: closing to the tray is expected. Reopen the window from the tray or quit explicitly.
 - The build reports missing runtime/plugin files or a hash mismatch: do not bypass verification. Clear the corresponding `.runtime-cache` entry and stage it again.
 - The installer reports an unknown publisher: this preview is unsigned. Verify the SHA-256 supplied with the Release before continuing.

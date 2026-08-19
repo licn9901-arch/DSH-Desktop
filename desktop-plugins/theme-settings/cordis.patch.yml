@@ -1,4 +1,0 @@
-# 桌面端仅声明主题设置容器，皮肤列表和操作仍由上游 Skin Center 提供。
-- insert:
-    - id: desktop-theme-settings
-      name: '@dsh-desktop/theme-settings'

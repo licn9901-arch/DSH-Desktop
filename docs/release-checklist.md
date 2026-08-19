@@ -1,6 +1,6 @@
 # 预览版发布检查表
 
-## Preview.8-10 验收记录
+## Preview.8-11 验收记录
 
 preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；preview.9 采用 solid LZMA，最终安装器为
 82,934,193 字节。preview.10 已切换默认 payload 并通过 80.94% 核心行覆盖率、三组零漏洞 audit、两次
@@ -24,6 +24,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] pnpm 9/10/11 真实兼容矩阵确认所有操作最终使用唯一的 `pnpm@10.34.5`。
 - [ ] `verify:runtime`、`verify:plugins`、`verify:payload` 通过。
 - [ ] `git diff --check` 通过，发布范围中没有 cache、安装目录或 debug artifact。
+- [ ] 工作区完全干净，全部正式报告的 `sourceCommit` 与候选 HEAD 一致。
 - [ ] 三方许可证与 NOTICE 覆盖 Node、Host、插件及新增 Rust/Node 构建依赖。
 
 ## Payload 与预算
@@ -51,6 +52,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] 路径穿越、ADS、设备名、大小写冲突、重复条目、symlink/reparse point、ZIP bomb 和截断 ZIP 均被拒绝。
 - [ ] 并发 provision、中断 staging、candidate 失败、状态写入失败和垃圾清理测试通过。
 - [ ] clean install、运行中升级、legacy 到 payload、连续 payload 升级与损坏资源矩阵通过。
+- [ ] preview.10 设置包迁移、旧设置包已卸载保持卸载，以及新设置包重复协调保持卸载通过。
 - [ ] candidate 只有真实 Host core/plugins readiness 与插件事务成功后才晋升 active。
 - [ ] 升级失败保持旧 active；新 exe 可运行 active 与 previous 两代 ABI。
 - [ ] 卸载始终删除桌面 runtime；仅勾选删除应用数据时删除其余 LocalAppData；永不删除 `~/.dsh`。
@@ -61,6 +63,8 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] fake Host 冒烟覆盖 readiness、单实例、关闭到托盘、显式退出和 Host PID 清理。
 - [ ] smoke 记录 `tauri.localhost` 为内部 allow，且没有该 host 的 `external_browser` 记录。
 - [ ] CoreReady 后崩溃、插件永不完成和恢复路径最多重试一次。
+- [ ] 托盘重启严格执行插件 prepare、Host readiness、commit；失败先 rollback 再恢复一次。
+- [ ] 添加工作区时原生目录选择器绑定主窗口，任务栏不出现独立 Node 窗口。
 - [ ] 正式 payload 安装器冒烟覆盖 candidate 晋升和 9 个内置 bundle readiness。
 - [ ] legacy 与 payload 使用相同 seed profile，预热后交替完成 20 对 warm 启动并记录 3 次 cold。
 - [ ] payload 启动 P95 劣化不超过 5% 或 100 ms，两者取较大值。
@@ -72,6 +76,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] preview.9 额外完成 preview.8 payload 到 preview.9 payload 的停止/运行中升级。
 - [ ] preview.8、preview.9 两轮通过后，preview.10 才把默认 build 切到 payload。
 - [ ] 默认切换后再经过一个稳定 preview，才删除 legacy 暂存路径。
+- [ ] preview.11 保留 legacy 对照链并使用 preview.10 作为 previous payload。
 - [ ] 版本化原子产物目录包含 NSIS、`.sha256`、manifest、构建/审计/基准/升级报告、许可证和 debug symbols。
 - [ ] Windows 10 22H2 与 Windows 11 x64 干净环境完成离线首次启动。
 - [ ] Release 标为 prerelease，注明社区非官方、Windows x64、内置版本和签名状态。

@@ -29,7 +29,7 @@
 从 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) 下载最新的
 `DeepSeek Harness Desktop_*_x64-setup.exe` 并安装。预览版仅支持 Windows 10 22H2 / Windows 11 x64。
 
-`v0.1.0-preview.10` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
+`v0.1.0-preview.11` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
@@ -49,7 +49,7 @@
 
 ## 内置插件
 
-`v0.1.0-preview.10` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
+`v0.1.0-preview.11` 将以下插件固定版本后随安装包离线交付。桌面端只维护带 marker 的托管安装，
 不会覆盖用户自行安装的同名插件，也会保留用户主动禁用的状态。
 
 | 插件 | 版本 | 默认行为与权限 |
@@ -60,11 +60,11 @@
 | [`@linxin666/dsh-client-ui-skin-center`](https://github.com/zhu1090093659/dsh-web-ui/tree/main/packages/skins/skin-center) | 0.2.2 | 单包内置全部皮肤，不安装已退役的 `dsh-skins` 载具或 Web UI 全家桶；可即时试穿、应用和恢复，无需重启 Host |
 | [`@vectorize-io/hindsight-coding-agents`](https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents) | 0.3.4 | 设置左侧“项目记忆”可配置 Cloud/自托管服务、凭据和项目 opt-in；未启用项目不记录也不上传 |
 | [`@liustack/modlens`](https://github.com/liustack/modlens) | 3.16.7 | 提供图片读取和结构化视觉结果；不预置密钥、视觉端点或 Agent CLI |
-| [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.3 | 桌面长期维护版；统一 Skills/MCP 界面与按钮，MCP 只保留 JSON 配置；`env`/`headers` 明文存于 `~/.dsh/mcp.json` |
+| [`@cubee-slide/skills-mcp-manager`](https://www.npmjs.com/package/@cubee-slide/skills-mcp-manager) | 0.2.4 | 桌面长期维护版；跟随 Skin Center 语义主题，提供紧凑 Skills/MCP 控件；MCP 只保留 JSON 配置，`env`/`headers` 明文存于 `~/.dsh/mcp.json` |
 
-桌面自有 `@dsh-desktop/theme-settings` 提供“预置插件”“项目记忆”和“主题”三个设置一级入口。“预置插件”
+桌面自有 `@dsh-desktop/settings` 默认提供“预置插件”和“项目记忆”两个设置入口，不再承载主题页面；主题统一由独立“皮肤中心”管理。设置插件允许用户卸载，重启和升级不会自动恢复；重新安装后继续读取原有配置。“预置插件”
 只切换白名单 package bundle，不卸载文件、不修改 dependencies、不调用 pnpm；保存后通过托盘
-“重启 DSH 服务”生效。官方 bundle、Market 与桌面控制 bundle 自身不可关闭，未知用户 bundle
+“重启 DSH 服务”生效。官方 bundle、Market 与 Runtime Services 等启动基础组件不可关闭，未知用户 bundle
 不会被修改。
 
 GenUI 的锁定 `SKILL.md` 首次启动会写入 `$DSH_HOME/skills/genui/SKILL.md`，只作用于 DSH。
@@ -209,7 +209,7 @@ npm run release:gate -- -LegacyInstaller '<preview.7 installer>' -PayloadInstall
 - 预置插件开关：打开“设置 → 预置插件”；开关保存后需从托盘重启 DSH 服务。
 - 项目记忆：打开“设置 → 项目记忆”；配置服务与 Token 后，只开启需要记忆的项目并重启 DSH 服务。
 - Skills 与 MCP：打开“设置 → 技能与 MCP”；MCP 服务统一使用 JSON 编辑器配置。
-- 主题切换：打开“设置 → 主题”；该入口由桌面适配器提供，具体皮肤 UI 与 Host API 仍来自 Skin Center。
+- 主题切换：打开独立“皮肤中心”；设置插件不再注册旧“主题”页面或 Skin Center 容器。
 - 窗口关闭后仍有任务：这是关闭到托盘的预期行为，请从托盘菜单重新打开或显式退出。
 - 构建提示运行时或插件缺失、哈希不匹配：不要绕过校验，清理对应 `.runtime-cache` 后重新暂存。
 - 安装器显示未知发布者：首个预览版未签名，请先核对 Release 提供的 SHA-256。

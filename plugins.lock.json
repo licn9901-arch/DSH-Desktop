@@ -10,7 +10,7 @@
   "plugins": [
     {
       "package": "@dsh-desktop/runtime-services",
-      "version": "0.1.0-preview.10",
+      "version": "0.1.0-preview.11",
       "bundleId": "desktop-runtime-services",
       "license": "MIT",
       "source": {
@@ -136,13 +136,13 @@
       ]
     },
     {
-      "package": "@dsh-desktop/theme-settings",
-      "version": "0.1.0-preview.10",
-      "bundleId": "desktop-theme-settings",
+      "package": "@dsh-desktop/settings",
+      "version": "0.1.0-preview.11",
+      "bundleId": "desktop-settings",
       "license": "MIT",
       "source": {
         "type": "local",
-        "path": "desktop-plugins/theme-settings"
+        "path": "desktop-plugins/settings"
       },
       "requiredFiles": [
         "lib/index.js",
@@ -161,8 +161,7 @@
       "permissions": [
         "原子切换精确白名单中的桌面托管 bundle，不修改依赖或卸载文件",
         "配置 Hindsight 服务、凭据状态和项目级显式启用",
-        "在设置左侧声明主题一级入口",
-        "渲染 Skin Center 使用的 web-ui.plugin.item 槽位"
+        "默认安装但允许用户卸载，卸载时保留用户配置"
       ]
     },
     {
@@ -257,12 +256,13 @@
     },
     {
       "package": "@cubee-slide/skills-mcp-manager",
-      "version": "0.2.3",
+      "version": "0.2.4",
       "bundleId": "skills-mcp-manager",
       "license": "MIT",
       "source": {
         "type": "npm",
-        "integrity": "sha512-JuPhoftrDPul29NcLac/BuB0JTArsTCOsTG8/nJnpRRjM03ADa2rDSuREV/HGGQdfs1JRTPHWz6h8mBNOmhWlA=="
+        "registry": "https://registry.npmjs.org/",
+        "integrity": "sha512-N94gaY8ropqRNCKKO3Ff4IFIQu+EcbKC3Vrl9WFzlGxb1QnJq6H8TVMyVJaM/ir+6riuML2A2YxcBVsQeQbFAw=="
       },
       "requiredFiles": [
         "lib/index.js",

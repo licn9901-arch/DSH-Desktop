@@ -102,7 +102,8 @@ npm run benchmark:compare -- `
 同目标的 verbatim、长路径或大小写差异不得触发链接重建。candidate、首次迁移和异常状态仍执行完整资源校验。
 
 矩阵覆盖 clean install、legacy 到 payload、运行中升级、损坏 manifest/截断 ZIP、candidate readiness 失败、
-垃圾清理和卸载。指定 `-PreviousPayloadInstaller` 后增加 payload 到 payload 的停止/运行中升级。旧 active 必须
+垃圾清理和卸载。指定 `-PreviousPayloadInstaller` 后增加 payload 到 payload 的停止/运行中升级，以及旧设置包
+迁移和已卸载设置包保持卸载。旧 active 必须
 保持可用，所有 install、`LOCALAPPDATA` 和 `DSH_HOME` 都位于独立系统临时目录，任何路径都不得删除用户 profile。
 Preview.7 需要展开和预置 legacy 小文件树，安装阶段单独允许最多 15 分钟；payload 安装及 Host/readiness
 仍使用命令传入的 180 秒门限，不能用 legacy 的宽限掩盖新版本启动超时。
@@ -123,8 +124,12 @@ preview.8 最终报告为 legacy P95 5,533 ms、payload P95 5,547 ms、门限 5,
 ```powershell
 npm run release:gate -- `
   -LegacyInstaller '<preview.7 legacy installer>' `
-  -PayloadInstaller '<current payload installer>'
+  -PayloadInstaller '<current payload installer>' `
+  -PreviousPayloadInstaller '<previous payload installer>'
 ```
+
+正式门禁只接受完全干净的 Git 工作区。构建、审计、兼容、复现、升级、性能和总门禁报告必须携带同一个
+40 位 `sourceCommit`；最终制品汇总会再次与当前 HEAD 比对，不能复用同版本其他提交的旧报告。
 
 ## 失败处理
 
