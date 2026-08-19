@@ -25,6 +25,9 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate-flate2
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61.2", features = ["Win32_Storage_FileSystem"] }
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [profile.release]
 strip = true
 

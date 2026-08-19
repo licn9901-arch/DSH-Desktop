@@ -1,0 +1,79 @@
+name: macOS release gate
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: Gate Apple Silicon artifact
+    runs-on: macos-15
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+
+      - name: Use locked Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.22.3
+          cache: npm
+
+      - name: Install locked Rust toolchain
+        run: |
+          rustup toolchain install 1.94.1 --profile minimal --component rustfmt,clippy,llvm-tools-preview
+          rustup default 1.94.1
+
+      - name: Install coverage runner
+        run: cargo install cargo-llvm-cov --version 0.9.0 --locked
+
+      - name: Install desktop dependencies
+        run: npm ci
+
+      - name: Run release gate and build DMG
+        run: npm run release:gate:macos
+
+      - name: Upload only gated release files
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-darwin-arm64-gated
+          path: .release-work/macos/gated/*
+          if-no-files-found: error
+          retention-days: 14
+
+  publish:
+    name: Publish gated files
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: gate
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check out release notes
+        uses: actions/checkout@v4
+
+      - name: Download files from the successful gate job
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-darwin-arm64-gated
+          path: release-artifacts
+
+      - name: Create prerelease when needed
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 || gh release create "${GITHUB_REF_NAME}" --prerelease --title "${GITHUB_REF_NAME}" --notes-file RELEASE_NOTES.md
+
+      - name: Upload exactly the gated files
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${GITHUB_REF_NAME}" release-artifacts/* --clobber

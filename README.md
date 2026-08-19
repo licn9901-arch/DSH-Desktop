@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows 桌面封装。
+  一个自包含、注重生命周期与安全边界的 DeepSeek Harness Windows / macOS 桌面封装。
 </p>
 
 <p align="center">
@@ -32,13 +32,17 @@
 `v0.1.0-preview.10` 未使用 Authenticode 签名，Windows SmartScreen 可能显示未知发布者提示。
 请在 Release 页面核对同名 `.sha256` 文件后再运行安装包。
 
+Apple Silicon Mac 可下载 `DeepSeek Harness Desktop_*_aarch64.dmg`，支持 macOS 13 及以上版本。
+当前 Mac 预览包使用 ad-hoc 签名且未经过 Apple notarization，首次打开可能出现 Gatekeeper 提示；请先核对
+同名 `.sha256` 和 `release-gate-macos.json`，再通过 Finder 打开。Intel Mac 暂不支持。
+
 安装包已经内置 Node.js `22.22.3`、`@deepseek-ai/dsh 0.1.0-rc.6`、
 `dshmarket 1.10.0` 与 `pnpm 10.34.5`，首次启动无需联网，也不要求预装 Node、DSH、pnpm
 或 DeepSeek 官方桌面端。
 
 ## 主要功能
 
-- 一键启动本地 `dsh web`，等待严格校验的回环地址后在 WebView2 中加载。
+- 一键启动本地 `dsh web`，等待严格校验的回环地址后在系统 WebView 中加载。
 - 单实例运行：再次启动只恢复并聚焦现有窗口，不创建第二个 Host。
 - 关闭主窗口后隐藏到系统托盘，任务继续运行；只有托盘“退出”才清理 Host。
 - 托盘可串行重启 DSH 服务；新 PID 和随机端口就绪后自动恢复 WebView。
@@ -176,6 +180,18 @@ pwsh -NoProfile -File .\scripts\stage-runtime.ps1 -Offline
 pwsh -NoProfile -File .\scripts\stage-plugins.ps1 -Offline
 ```
 
+Apple Silicon Mac 使用独立配置和锁文件，不改变 Windows 的 `build`、payload、NSIS 或 `release:gate`：
+
+```bash
+npm ci
+cargo install cargo-llvm-cov --version 0.9.0 --locked
+npm run build:macos
+```
+
+`build:macos` 等同于 `release:gate:macos`。只有 lint、测试、80% 覆盖率、三组零漏洞 audit、两次资源闭包
+一致、Darwin 原生模块加载、`.app` 生命周期冒烟、签名结构、DMG 校验和体积预算全部通过后，才会在
+`.release-work/macos/gated` 生成 DMG、SHA-256 和门禁报告。标签 workflow 只上传该目录中的文件。
+
 ## 测试与质量门禁
 
 ```powershell
@@ -196,12 +212,19 @@ npm run smoke:startup
 npm run release:gate -- -LegacyInstaller '<preview.7 installer>' -PayloadInstaller '<current payload installer>'
 ```
 
+macOS Apple Silicon 使用：
+
+```bash
+npm run release:gate:macos
+```
+
 覆盖率门禁为 Host、运行时、生命周期、导航、日志和就绪解析核心模块行覆盖率不低于 80%；应用装配层由 Windows 冒烟覆盖。详细范围与流程见
 [测试说明](docs/testing.md)。
 
 ## 日志与故障排查
 
-日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`。
+Windows 日志位于 `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`；macOS 日志位于
+`~/Library/Logs/dsh-desktop/dsh-desktop.log`。
 
 - 启动失败：查看日志中的 `level=ERROR`、Host PID 和真实退出码。
 - 市场显示“状态未知”：表示 registry 或版本检查失败，不等同于“已是最新”。
@@ -222,7 +245,8 @@ npm run release:gate -- -LegacyInstaller '<preview.7 installer>' -PayloadInstall
 
 ## 当前边界
 
-- 仅支持 Windows x64，不支持 macOS、Linux 或 ARM64。
+- 支持 Windows 10 22H2 / Windows 11 x64，以及实验性的 macOS 13+ Apple Silicon；Intel Mac 与 Linux 暂不支持。
+- Mac 预览包采用 ad-hoc 签名且未 notarize；Windows 预览包仍未使用 Authenticode 签名。
 - 不包含自动更新、开机自启、插件签名验证、权限沙箱、手机远控或 Channels。
 - 本机已有的 `0.1.0` 原型不保证原地升级；测试预览版前请先卸载原型并保留用户数据。
 

@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
+#[cfg(windows)]
 use std::process::Command;
 use std::sync::Arc;
 
@@ -1890,14 +1891,15 @@ mod tests {
 
     use serde_json::{json, Value};
 
+    #[cfg(windows)]
+    use super::copy_physical_tree;
     use super::{
-        copy_physical_tree, normalized_path, package_relative_path, plan_managed_skill,
-        plan_profile, repair_legacy_skin_patch_content, sha256_hex, DirectoryLinker,
-        ManagedPluginState, ManagedSkill, ManagedSkillAction, ManagedSkillState,
-        PluginInstallState, PluginLock, PluginManager, BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE,
-        LEGACY_SIDE_PANEL, LEGACY_SKILLS_MCP_BUNDLE, LEGACY_SKINS_BUNDLE, MARKET_BUNDLE,
-        MARKET_RUNTIME_ALIAS, RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, SKIN_CENTER_BUNDLE,
-        WEB_APP_BUNDLE,
+        normalized_path, package_relative_path, plan_managed_skill, plan_profile,
+        repair_legacy_skin_patch_content, sha256_hex, DirectoryLinker, ManagedPluginState,
+        ManagedSkill, ManagedSkillAction, ManagedSkillState, PluginInstallState, PluginLock,
+        PluginManager, BASE_BUNDLE, DESKTOP_SETTINGS_BUNDLE, LEGACY_SIDE_PANEL,
+        LEGACY_SKILLS_MCP_BUNDLE, LEGACY_SKINS_BUNDLE, MARKET_BUNDLE, MARKET_RUNTIME_ALIAS,
+        RUNTIME_SERVICES_BUNDLE, SKILLS_MCP_BUNDLE, SKIN_CENTER_BUNDLE, WEB_APP_BUNDLE,
     };
 
     fn lock() -> PluginLock {

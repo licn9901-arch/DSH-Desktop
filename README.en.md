@@ -9,7 +9,7 @@
 </p>
 
 <p align="center">
-  A self-contained DeepSeek Harness desktop wrapper for Windows, built around explicit lifecycle management and security boundaries.
+  A self-contained DeepSeek Harness desktop wrapper for Windows and macOS, built around explicit lifecycle management and security boundaries.
 </p>
 
 <p align="center">
@@ -32,12 +32,16 @@ Download the latest `DeepSeek Harness Desktop_*_x64-setup.exe` from
 `v0.1.0-preview.10` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
 Before running the installer, verify it against the matching `.sha256` file on the Release page.
 
+Apple Silicon users can download `DeepSeek Harness Desktop_*_aarch64.dmg` for macOS 13 or later.
+The Mac preview is ad-hoc signed and not Apple-notarized, so Gatekeeper may prompt on first launch. Verify the matching
+`.sha256` file and `release-gate-macos.json` before opening it from Finder. Intel Macs are not supported yet.
+
 The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 `dshmarket 1.10.0`, and `pnpm 10.34.5`. The first launch works offline and does not require a separate Node, DSH, pnpm, or official DeepSeek desktop installation.
 
 ## Features
 
-- Starts a local `dsh web` instance and loads it in WebView2 only after validating its loopback address.
+- Starts a local `dsh web` instance and loads it in the system webview only after validating its loopback address.
 - Enforces a single instance: launching the app again restores and focuses the existing window instead of creating a second Host.
 - Closing the main window hides it in the system tray while tasks continue running; only **Quit** from the tray shuts down the Host.
 - Restarts the DSH service serially from the tray and restores the WebView after the new PID and random port become ready.
@@ -150,6 +154,19 @@ pwsh -NoProfile -File .\scripts\stage-runtime.ps1 -Offline
 pwsh -NoProfile -File .\scripts\stage-plugins.ps1 -Offline
 ```
 
+Apple Silicon uses a separate lock and Tauri configuration without changing the Windows `build`, payload, NSIS, or
+`release:gate` paths:
+
+```bash
+npm ci
+cargo install cargo-llvm-cov --version 0.9.0 --locked
+npm run build:macos
+```
+
+`build:macos` is the gated build. It writes a DMG, SHA-256 file, and JSON gate report to
+`.release-work/macos/gated` only after lint, tests, 80% coverage, zero-advisory audits, two identical resource closures,
+Darwin native-module loads, app lifecycle smoke, code-signature verification, DMG verification, and size budgets pass.
+
 ## Tests and Quality Gates
 
 ```powershell
@@ -170,11 +187,18 @@ npm run smoke:startup
 npm run release:gate -- -LegacyInstaller '<preview.7 installer>' -PayloadInstaller '<current payload installer>'
 ```
 
+For Apple Silicon macOS:
+
+```bash
+npm run release:gate:macos
+```
+
 The coverage gate requires at least 80% line coverage across the core Host, runtime, lifecycle, navigation, logging, and readiness modules. Windows smoke tests cover application assembly. See [Testing Guide](docs/testing.md) for scope and procedures.
 
 ## Logs and Troubleshooting
 
-Logs are stored at `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`.
+Windows logs are stored at `%LOCALAPPDATA%\dsh-desktop\dsh-desktop.log`; macOS logs are stored at
+`~/Library/Logs/dsh-desktop/dsh-desktop.log`.
 
 - Startup failure: inspect `level=ERROR`, the Host PID, and the actual exit code in the log.
 - Market reports **Status unknown**: the registry or version check failed; this does not mean the installed version is current.
@@ -193,7 +217,8 @@ Automatic updates are not available in the initial release. Install newer versio
 
 ## Current Limitations
 
-- Windows x64 only; macOS, Linux, and ARM64 are not supported.
+- Windows 10 22H2 / Windows 11 x64 and experimental macOS 13+ on Apple Silicon are supported; Intel Macs and Linux are not.
+- The Mac preview is ad-hoc signed and not notarized; the Windows preview remains unsigned with Authenticode.
 - No automatic updates, startup-at-login option, plugin signature verification, permission sandbox, mobile remote control, or Channels.
 - In-place upgrades from the existing local `0.1.0` prototype are not guaranteed. Uninstall the prototype while preserving user data before testing preview builds.
 

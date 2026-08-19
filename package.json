@@ -30,6 +30,10 @@
     "dev": "npm run validate:icons && tauri dev --config src-tauri/tauri.legacy.conf.json",
     "build:legacy": "npm run validate:icons && npm run stage:runtime && npm run verify:runtime && npm run stage:plugins && npm run verify:plugins && tauri build --config src-tauri/tauri.legacy.conf.json",
     "build:payload": "pwsh -NoProfile -File scripts/build-payload.ps1",
+    "stage:macos": "node scripts/macos-release.mjs stage",
+    "verify:macos": "node scripts/macos-release.mjs verify",
+    "release:gate:macos": "node scripts/macos-release.mjs gate",
+    "build:macos": "npm run release:gate:macos",
     "build": "npm run build:payload"
   },
   "devDependencies": {

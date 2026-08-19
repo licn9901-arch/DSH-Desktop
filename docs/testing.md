@@ -126,7 +126,29 @@ npm run release:gate -- `
   -PayloadInstaller '<current payload installer>'
 ```
 
+### macOS Apple Silicon 门禁
+
+macOS 使用独立门禁，不修改 Windows 的默认 `build`、NSIS 配置、payload 脚本或安装器矩阵：
+
+```bash
+npm ci
+cargo install cargo-llvm-cov --version 0.9.0 --locked
+npm run release:gate:macos
+```
+
+门禁仅接受 `darwin-arm64`，并固定使用 `runtime.macos.lock.json` 中带 SHA-256 的 Node `22.22.3` 归档。
+它依次执行 Windows 配置隔离检查、`git diff --check`、lint、Rust/Node 测试、80% 行覆盖率、主项目与两个
+runtime 的零漏洞 audit、两次非缓存资源暂存及内容摘要比较、Darwin 原生模块真实加载、Tauri `.app` 构建、
+ad-hoc codesign 深度校验、DMG 校验、隔离 `$DSH_HOME` 的 CoreReady/PluginsReady 与 `--quit-existing`
+生命周期冒烟，以及 Host PID 清理。
+
+`.app` 不得超过 600 MiB，DMG 不得超过 300 MiB。测试、示例、源码映射、类型声明、其他平台 PTY
+prebuild 和已由插件客户端打包的重复依赖不得进入资源闭包。任何阶段失败时均删除候选发布目录并写失败报告；
+只有全部通过后才原子生成 `.release-work/macos/gated`。GitHub 标签 workflow 只允许上传该目录中的 DMG、
+`.sha256` 和 `release-gate-macos.json`，不能直接上传 `target` 中的未门禁文件。
+
 ## 失败处理
 
 任一功能、回滚、体积、速度或审计门禁失败时，`npm run build` 继续使用 legacy。不得删除失败产物掩盖问题、
 放宽阈值或跳过 payload verify。无法执行的门禁必须在发布检查表中保留未完成状态并说明原因。
+macOS 任一门禁失败时不得生成或上传 gated DMG；Windows 发布路径和回退策略保持不变。
