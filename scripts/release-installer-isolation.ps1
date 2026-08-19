@@ -127,6 +127,46 @@ function Assert-DshInstallerTestRoots {
     }
 }
 
+# 在 CI/Job 环境中 NSIS 首次自复制进程可能被宿主提前回收；只有退出码为 0 且目标完全无进展时重试一次。
+function Invoke-DshSilentUninstall {
+    param(
+        [Parameter(Mandatory = $true)][string]$Uninstaller,
+        [Parameter(Mandatory = $true)][string[]]$CompletionPaths,
+        [int]$TimeoutSeconds = 60
+    )
+    if ($CompletionPaths.Count -eq 0) { throw 'Silent uninstall requires at least one completion path.' }
+
+    foreach ($attempt in 1..2) {
+        if (-not (Test-Path -LiteralPath $Uninstaller -PathType Leaf)) {
+            if (@($CompletionPaths | Where-Object { Test-Path -LiteralPath $_ }).Count -eq 0) { return }
+            throw "Uninstaller disappeared before cleanup completed: $Uninstaller"
+        }
+
+        $process = Start-Process -FilePath $Uninstaller -ArgumentList '/S' -PassThru
+        if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
+            Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
+            throw "Silent uninstall timed out on attempt ${attempt}: $Uninstaller"
+        }
+        if ($process.ExitCode -ne 0) {
+            throw "Silent uninstall failed with code $($process.ExitCode) on attempt ${attempt}: $Uninstaller"
+        }
+
+        $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+        do {
+            $remaining = @($CompletionPaths | Where-Object { Test-Path -LiteralPath $_ })
+            if ($remaining.Count -eq 0) { return }
+            Start-Sleep -Milliseconds 250
+        } while ((Get-Date) -lt $deadline)
+
+        if ($attempt -eq 1) {
+            Write-Warning "Silent uninstall returned success without cleanup progress; retrying once: $Uninstaller"
+        }
+    }
+
+    $remaining = @($CompletionPaths | Where-Object { Test-Path -LiteralPath $_ })
+    throw "Silent uninstall left managed paths after two attempts: $($remaining -join '; ')"
+}
+
 # 清理由干净测试用户中的安装器场景创建的固定 Shell 状态；遇到非本轮目标时立即拒绝删除。
 function Clear-DshInstallerTestUserState {
     param([Parameter(Mandatory = $true)][string[]]$OwnedInstallRoots)

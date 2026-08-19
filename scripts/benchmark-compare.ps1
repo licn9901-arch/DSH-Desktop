@@ -190,12 +190,9 @@ function Uninstall-BenchmarkBuild {
     param([Parameter(Mandatory = $true)]$Context)
     if (-not (Test-Path -LiteralPath $Context.Uninstaller -PathType Leaf)) { return }
     Set-BenchmarkEnvironment $Context
-    $process = Start-Process -FilePath $Context.Uninstaller -ArgumentList '/S' -PassThru
-    if (-not $process.WaitForExit(60000)) {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        throw "Uninstaller timed out: $($Context.Uninstaller)"
-    }
-    if ($process.ExitCode -ne 0) { throw "Uninstaller failed with code $($process.ExitCode)" }
+    Invoke-DshSilentUninstall `
+        -Uninstaller $Context.Uninstaller `
+        -CompletionPaths @($Context.Exe, $Context.RuntimeRoot)
 }
 
 $legacyPath = Resolve-InstallerPath $LegacyInstaller

@@ -283,24 +283,14 @@ finally {
         }
     }
     if ($installed -and (Test-Path -LiteralPath $uninstaller -PathType Leaf)) {
-        $uninstallProcess = Start-Process -FilePath $uninstaller -ArgumentList '/S' -PassThru
-        if (-not $uninstallProcess.WaitForExit(60000)) {
-            Stop-Process -Id $uninstallProcess.Id -Force -ErrorAction SilentlyContinue
-            throw 'Silent uninstall did not exit within 60 seconds.'
-        }
-        if ($uninstallProcess.ExitCode -ne 0) {
-            throw "Silent uninstall failed with exit code $($uninstallProcess.ExitCode)."
-        }
-        $uninstallDeadline = (Get-Date).AddSeconds(60)
-        while ((Test-Path -LiteralPath $installedExe) -and (Get-Date) -lt $uninstallDeadline) {
-            Start-Sleep -Milliseconds 250
-        }
+        $completionPaths = @($installedExe)
+        if ($Payload) { $completionPaths += $payloadRuntimeRoot }
+        Invoke-DshSilentUninstall `
+            -Uninstaller $uninstaller `
+            -CompletionPaths $completionPaths
     }
     if ($preseedVerified -and -not (Test-Path -LiteralPath $preseededStore -PathType Container)) {
         throw 'Uninstaller removed the managed plugin cache that must be preserved.'
-    }
-    if ($Payload -and (Test-Path -LiteralPath $payloadRuntimeRoot)) {
-        throw 'Uninstaller did not remove the desktop-managed payload runtime.'
     }
     if ($payloadActivationVerified -and -not (Test-Path -LiteralPath $profileSentinel -PathType Leaf)) {
         throw 'Uninstaller removed the user DSH profile sentinel.'

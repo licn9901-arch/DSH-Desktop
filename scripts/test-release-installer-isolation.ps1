@@ -93,11 +93,15 @@ if ($upgradeMatrixScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$tru
     throw 'Upgrade matrix does not select the installed WebView data-directory mode.'
 }
 foreach ($releaseScript in @(
+    @{ Name = 'installer smoke'; Content = $installerSmokeScript },
     @{ Name = 'upgrade matrix'; Content = $upgradeMatrixScript },
     @{ Name = 'startup benchmark'; Content = $benchmarkScript }
 )) {
     if ($releaseScript.Content -match '\$env:DSH_DESKTOP_WEBVIEW_TEST_DATA_DIR\s*=') {
         throw "$($releaseScript.Name) still injects the WebView test data-directory override."
+    }
+    if ($releaseScript.Content -notmatch 'Invoke-DshSilentUninstall') {
+        throw "$($releaseScript.Name) does not use the bounded NSIS uninstall retry helper."
     }
 }
 

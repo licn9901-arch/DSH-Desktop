@@ -317,16 +317,9 @@ function Uninstall-And-Verify {
     param([Parameter(Mandatory = $true)]$Context)
     if (-not (Test-Path -LiteralPath $Context.Uninstaller -PathType Leaf)) { throw 'Uninstaller is missing.' }
     Set-MatrixEnvironment $Context
-    $process = Start-Process -FilePath $Context.Uninstaller -ArgumentList '/S' -PassThru
-    if (-not $process.WaitForExit(60000)) {
-        Stop-Process -Id $process.Id -Force -ErrorAction SilentlyContinue
-        throw 'Uninstaller timed out.'
-    }
-    if ($process.ExitCode -ne 0) { throw "Uninstaller failed with code $($process.ExitCode)." }
-    $deadline = (Get-Date).AddSeconds(60)
-    while ((Test-Path -LiteralPath $Context.Exe) -and (Get-Date) -lt $deadline) { Start-Sleep -Milliseconds 250 }
-    if (Test-Path -LiteralPath $Context.Exe) { throw 'Installed executable remained after uninstall.' }
-    if (Test-Path -LiteralPath $Context.RuntimeRoot) { throw 'Managed runtime remained after uninstall.' }
+    Invoke-DshSilentUninstall `
+        -Uninstaller $Context.Uninstaller `
+        -CompletionPaths @($Context.Exe, $Context.RuntimeRoot)
     if (-not (Test-Path -LiteralPath $Context.Sentinel -PathType Leaf)) { throw 'Uninstaller removed profile sentinel.' }
 }
 
