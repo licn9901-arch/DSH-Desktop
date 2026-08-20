@@ -626,6 +626,12 @@ impl PluginManager {
         let target = normalized_path(&self.bundled_market_root);
         let expected_dependency = link_spec(&target);
         let current_dependency = dependencies.get(MARKET_BUNDLE).and_then(Value::as_str);
+        let stale_desktop_dependency = current_dependency
+            .and_then(|dependency| dependency.strip_prefix("link:"))
+            .map(PathBuf::from)
+            .is_some_and(|target| {
+                is_managed_payload_market_target(&target, &self.bundled_market_root)
+            });
         let desktop_managed = match current_dependency {
             None => {
                 dependencies.insert(
@@ -634,8 +640,14 @@ impl PluginManager {
                 );
                 true
             }
-            Some(current) => current == expected_dependency,
+            Some(current) => current == expected_dependency || stale_desktop_dependency,
         };
+        if stale_desktop_dependency {
+            dependencies.insert(
+                MARKET_BUNDLE.to_owned(),
+                Value::String(expected_dependency.clone()),
+            );
+        }
 
         let link = self.web_profile.join("node_modules").join(MARKET_BUNDLE);
         let previous_target = self.linker.target(&link)?;
@@ -1922,6 +1934,43 @@ fn paths_equal(left: &Path, right: &Path) -> bool {
     }
 }
 
+/// 判断 Market 目标是否属于当前桌面 runtime 根目录下的另一代 payload。
+fn is_managed_payload_market_target(target: &Path, bundled_market: &Path) -> bool {
+    let Some((runtime_root, _)) = payload_market_location(bundled_market) else {
+        return false;
+    };
+    let Some((target_runtime_root, target_digest)) = payload_market_location(target) else {
+        return false;
+    };
+    paths_equal(&runtime_root, &target_runtime_root)
+        && target_digest.len() == 64
+        && target_digest.bytes().all(|byte| byte.is_ascii_hexdigit())
+}
+
+/// 从 `<runtime>/<digest>/host/node_modules/dshmarket` 提取 runtime 根目录和摘要。
+fn payload_market_location(path: &Path) -> Option<(PathBuf, String)> {
+    let market = path.file_name()?.to_string_lossy();
+    let node_modules = path.parent()?;
+    let host = node_modules.parent()?;
+    let digest_root = host.parent()?;
+    if !market.eq_ignore_ascii_case(MARKET_BUNDLE)
+        || !node_modules
+            .file_name()?
+            .to_string_lossy()
+            .eq_ignore_ascii_case("node_modules")
+        || !host
+            .file_name()?
+            .to_string_lossy()
+            .eq_ignore_ascii_case("host")
+    {
+        return None;
+    }
+    Some((
+        digest_root.parent()?.to_owned(),
+        digest_root.file_name()?.to_string_lossy().into_owned(),
+    ))
+}
+
 /// 生成 profile dependency 使用的本地链接 spec。
 fn link_spec(target: &str) -> String {
     format!("link:{}", target.replace('\\', "/"))
@@ -2943,6 +2992,62 @@ mod tests {
             .path()
             .join("home/.dsh/profiles/web/cordis.patch.yml")
             .exists());
+    }
+
+    #[test]
+    fn stale_payload_market_link_is_retargeted_to_current_runtime() {
+        let (root, mut manager, linker) = manager_fixture();
+        let old_digest = "a".repeat(64);
+        let current_digest = "b".repeat(64);
+        let old_target = root
+            .path()
+            .join("runtime")
+            .join(old_digest)
+            .join("host/node_modules/dshmarket");
+        let current_target = root
+            .path()
+            .join("runtime")
+            .join(&current_digest)
+            .join("host/node_modules/dshmarket");
+        root.write(
+            &format!(
+                "runtime/{}/host/node_modules/dshmarket/package.json",
+                current_digest
+            ),
+            br#"{"name":"dshmarket","version":"1.10.0"}"#,
+        );
+        manager.bundled_market_root = current_target.clone();
+        manager.legacy_market_root = current_target.with_file_name(MARKET_RUNTIME_ALIAS);
+        root.write(
+            "home/.dsh/profiles/web/package.json",
+            format!(
+                r#"{{"dependencies":{{"dshmarket":"{}"}},"dsh":{{"profile":{{"bundles":["dshmarket"]}}}}}}"#,
+                link_spec(&normalized_path(&old_target))
+            ),
+        );
+        let market_link = root
+            .path()
+            .join("home/.dsh/profiles/web/node_modules/dshmarket");
+        linker
+            .links
+            .lock()
+            .unwrap()
+            .insert(market_link.clone(), old_target);
+
+        manager.prepare().unwrap().commit().unwrap();
+
+        let profile: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            profile["dependencies"][MARKET_BUNDLE],
+            link_spec(&normalized_path(&current_target))
+        );
+        assert_eq!(
+            linker.links.lock().unwrap().get(&market_link),
+            Some(&current_target)
+        );
     }
 
     #[test]

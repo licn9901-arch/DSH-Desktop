@@ -29,7 +29,7 @@ Project website: [https://dsh.cubee.chat/](https://dsh.cubee.chat/)
 Download the latest `DeepSeek Harness Desktop_*_x64-setup.exe` from
 [GitHub Releases](https://github.com/licn9901-arch/DSH-Desktop/releases) and run the installer. Preview builds support only Windows 10 22H2 and Windows 11 on x64.
 
-`v0.1.0-preview.11` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
+`v0.1.0-preview.12` is not Authenticode-signed, so Windows SmartScreen may identify it as coming from an unknown publisher.
 Before running the installer, verify it against the matching `.sha256` file on the Release page.
 
 The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
@@ -48,7 +48,7 @@ The installer includes Node.js `22.22.3`, `@deepseek-ai/dsh 0.1.0-rc.6`,
 
 ## Bundled Plugins
 
-`v0.1.0-preview.11` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
+`v0.1.0-preview.12` pins and delivers the following plugins offline. The desktop app manages only marker-owned installations. It does not overwrite same-name plugins installed by the user and preserves plugins the user has disabled.
 
 | Plugin | Version | Default behavior and permissions |
 |---|---:|---|

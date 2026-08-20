@@ -238,6 +238,17 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
                     "runtime candidate failed validation; falling back to active runtime: {candidate_error}"
                 ));
                 handle.state::<HostSupervisor>().shutdown_for_recovery();
+                let Some(fallback) = selection.fallback else {
+                    // 首次安装没有 active 可回退时保留 candidate，避免下一次启动误走
+                    // payload 安装器不再携带的 legacy 资源目录。
+                    fail(
+                        &handle,
+                        &format!(
+                            "the provisioned runtime failed validation and no previous runtime is available: {candidate_error}"
+                        ),
+                    );
+                    return Ok(());
+                };
                 if let Some(activation) = &runtime.activation {
                     if let Ok(state) = read_runtime_state(&activation.runtime_root) {
                         if state.candidate.as_ref().is_some_and(|candidate| {
@@ -258,15 +269,6 @@ fn setup_application(app: &mut tauri::App) -> Result<(), Box<dyn std::error::Err
                         }
                     }
                 }
-                let Some(fallback) = selection.fallback else {
-                    fail(
-                        &handle,
-                        &format!(
-                            "the provisioned runtime failed validation and no previous runtime is available: {candidate_error}"
-                        ),
-                    );
-                    return Ok(());
-                };
                 runtime = fallback;
             }
         }
