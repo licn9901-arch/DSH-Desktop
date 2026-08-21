@@ -93,6 +93,20 @@ if ($installerSmokeScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$tr
 if ($upgradeMatrixScript -notmatch 'UseInstalledWebViewDataDirectory\s*=\s*\$true') {
     throw 'Upgrade matrix does not select the installed WebView data-directory mode.'
 }
+if ($upgradeMatrixScript -match 'Preview\.10 fixture') {
+    throw 'Upgrade matrix still assumes the direct previous installer is preview.10.'
+}
+if ($upgradeMatrixScript -notmatch "Properties\.Remove\('@dsh-desktop/settings'\)") {
+    throw 'Upgrade matrix does not simulate uninstalling the current settings package.'
+}
+if ($upgradeMatrixScript -notmatch "payload-retired-plugin-user-takeover") {
+    throw 'Upgrade matrix does not preserve a user-taken-over retired plugin.'
+}
+foreach ($retiredPackage in @('dsh-at-file', '@liustack/modlens')) {
+    if ($upgradeMatrixScript -notmatch [regex]::Escape($retiredPackage)) {
+        throw "Upgrade matrix does not verify retired package $retiredPackage."
+    }
+}
 if (-not $isolationScript.Contains('"_?=$installRoot"')) {
     throw 'Installer isolation helper does not fall back to direct NSIS uninstall mode.'
 }
