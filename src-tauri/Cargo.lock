@@ -827,7 +827,7 @@ dependencies = [
 
 [[package]]
 name = "dsh-desktop"
-version = "0.1.0-preview.12"
+version = "0.1.0-preview.13"
 dependencies = [
  "chrono",
  "fs2",

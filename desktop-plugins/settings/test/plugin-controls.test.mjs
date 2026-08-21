@@ -24,6 +24,8 @@ async function fixture() {
   const profile = {
     dependencies: {
       "dsh-at-file": "link:C:/managed/dsh-at-file",
+      "@omdsh-dev/dsh-genui": "link:C:/managed/dsh-genui",
+      "dsh-better-sidebar": "link:C:/managed/dsh-better-sidebar",
       "user-plugin": "1.2.3",
     },
     dsh: {
@@ -71,8 +73,12 @@ test("只接受 web profile 白名单，并保护基础 bundle", () => {
     /unknown-managed-plugin/,
   );
   assert.throws(
-    () => assertToggleBody({ profile: "other", package: "dsh-at-file", enabled: false }),
+    () => assertToggleBody({ profile: "other", package: "@omdsh-dev/dsh-genui", enabled: false }),
     /invalid-request/,
+  );
+  assert.throws(
+    () => assertToggleBody({ profile: "web", package: "dsh-at-file", enabled: false }),
+    /unknown-managed-plugin/,
   );
 });
 
@@ -121,19 +127,20 @@ test("API 只接受回环 Host 与同源浏览器请求", () => {
   );
 });
 
-test("开关只修改 bundles，保留 dependencies 与未知用户 bundle", async () => {
+test("开关只修改 bundles，并保留历史 At File 依赖与未知用户 bundle", async () => {
   const { path, profile } = await fixture();
   await toggleManagedPlugin(
-    { profile: "web", package: "dsh-at-file", enabled: false },
+    { profile: "web", package: "@omdsh-dev/dsh-genui", enabled: false },
     path,
   );
   const updated = JSON.parse(await readFile(path, "utf8"));
   assert.deepEqual(updated.dependencies, profile.dependencies);
   assert(updated.dsh.profile.bundles.includes("user-plugin"));
-  assert(!updated.dsh.profile.bundles.includes("dsh-at-file"));
+  assert(updated.dsh.profile.bundles.includes("dsh-at-file"));
+  assert(!updated.dsh.profile.bundles.includes("@omdsh-dev/dsh-genui"));
 
   await toggleManagedPlugin(
-    { profile: "web", package: "dsh-at-file", enabled: false },
+    { profile: "web", package: "@omdsh-dev/dsh-genui", enabled: false },
     path,
   );
   const repeated = JSON.parse(await readFile(path, "utf8"));
@@ -164,7 +171,7 @@ test("并发开关串行合并，列表返回最终状态", async () => {
   const { path } = await fixture();
   await Promise.all([
     toggleManagedPlugin(
-      { profile: "web", package: "dsh-at-file", enabled: false },
+      { profile: "web", package: "dsh-better-sidebar", enabled: false },
       path,
     ),
     toggleManagedPlugin(
@@ -173,7 +180,8 @@ test("并发开关串行合并，列表返回最终状态", async () => {
     ),
   ]);
   const rows = await listManagedPlugins(path);
-  assert.equal(rows.find((row) => row.package === "dsh-at-file").enabled, false);
+  assert.equal(rows.some((row) => row.package === "dsh-at-file"), false);
+  assert.equal(rows.find((row) => row.package === "dsh-better-sidebar").enabled, false);
   assert.equal(rows.find((row) => row.package === "@omdsh-dev/dsh-genui").enabled, false);
 });
 

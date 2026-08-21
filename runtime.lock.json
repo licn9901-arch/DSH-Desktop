@@ -9,15 +9,15 @@
   },
   "dsh": {
     "package": "@deepseek-ai/dsh",
-    "version": "0.1.0-rc.6",
-    "integrity": "sha512-brpZfED7ieRa2PQ5tUxMhHrM1pb2CmKFVM/f6yMULBDMicahk+Z2OsHgTwTDnoiZm23Ftu9rQz0NN4pflaoJcg==",
+    "version": "0.1.0-rc.8",
+    "integrity": "sha512-VQU5NlomrKLRgcXuOf+sxWFvqxPA8q9vMhrKPlPPXiOJEhGlGlAdiyxZvZxkCVI+v0zbhe21cY3/luLyxpSzzA==",
     "nodeRange": ">=22.13 <23",
     "cliEntry": "node_modules/@deepseek-ai/dsh/lib/bin.js"
   },
   "market": {
     "package": "dshmarket",
-    "version": "1.10.0",
-    "integrity": "sha512-pfsFC8Oxg/Ju6ZzfaQqrkGpbbT2lHXzKc7fXjSj1isOZS4QD4J8Tup1pQqA44laA6akiff4pDPD4wlzOAN4duA==",
+    "version": "1.17.1",
+    "integrity": "sha512-DQRK0dg0duXhDOqw6LWy5m6GkG3oLiTXC9pM6W9mi1gCbqM1ofgSPuyPOGCsE+06qHsiF65j/urpvCyvhhCPNw==",
     "nodeRange": ">=22.13 <23",
     "bundlePatch": "node_modules/dshmarket/cordis.patch.yml"
   },

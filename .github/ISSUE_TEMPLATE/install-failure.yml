@@ -1,0 +1,46 @@
+name: 安装或启动失败
+description: 报告安装器、SmartScreen、WebView2 或 Host 就绪问题
+title: "[Install] "
+labels: [installation, needs-triage]
+body:
+  - type: checkboxes
+    attributes:
+      label: 安全检查
+      options:
+        - label: 安装包来自本仓库固定 Release 资产
+          required: true
+        - label: 我已核对同版本 SHA-256
+          required: true
+        - label: 日志和截图已删除密钥、Token、Cookie 与私有路径
+          required: true
+  - type: input
+    attributes:
+      label: 安装包文件名
+      placeholder: DeepSeek.Harness.Desktop_0.1.0-preview.12_x64-setup.exe
+    validations:
+      required: true
+  - type: input
+    attributes:
+      label: Windows 与 WebView2 版本
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: 失败阶段
+      options:
+        - 下载或 SHA-256 校验
+        - SmartScreen 或安装器
+        - 首次启动
+        - Host 就绪
+        - 升级后启动
+        - 卸载或回滚
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 现象与已尝试操作
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 已脱敏日志

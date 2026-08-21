@@ -1,14 +1,14 @@
 {
   "name": "dsh-desktop-managed-plugins",
-  "version": "0.1.0-preview.12",
+  "version": "0.1.0-preview.13",
   "private": true,
   "description": "Locked production dependencies for DSH Desktop managed plugins",
   "dependencies": {
     "@cubee-slide/skills-mcp-manager": "0.2.4",
-    "@linxin666/dsh-client-ui-skin-center": "0.2.2",
-    "@liustack/modlens": "3.16.7",
-    "@vectorize-io/hindsight-coding-agents": "0.3.4",
-    "dsh-better-sidebar": "0.12.2",
+    "@linxin666/dsh-client-ui-skin-center": "0.2.6",
+    "@liustack/modlens": "3.22.1",
+    "@vectorize-io/hindsight-coding-agents": "0.4.1",
+    "dsh-better-sidebar": "0.14.0",
     "zod": "4.4.3"
   }
 }

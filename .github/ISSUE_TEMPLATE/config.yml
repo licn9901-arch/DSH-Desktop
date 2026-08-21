@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 安装与 SHA-256 指南
+    url: https://dsh.cubee.chat/guides/verify-windows-installer/
+    about: 提交安装问题前先核对来源与校验值
+  - name: GitHub Discussions
+    url: https://github.com/licn9901-arch/deepseek-harness-desktop/discussions
+    about: 使用问题、经验交流与不确定是否为 Bug 的讨论

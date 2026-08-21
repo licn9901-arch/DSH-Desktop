@@ -1,0 +1,43 @@
+name: Bug 报告
+description: 报告可以稳定复现的桌面端功能问题
+title: "[Bug] "
+labels: [bug, needs-triage]
+body:
+  - type: checkboxes
+    attributes:
+      label: 提交前检查
+      options:
+        - label: 我已检查现有 Issue，未发现相同问题
+          required: true
+        - label: 我没有在日志或截图中包含密钥、Token、Cookie 或私有代码
+          required: true
+  - type: input
+    attributes:
+      label: 桌面版版本
+      placeholder: v0.1.0-preview.12
+    validations:
+      required: true
+  - type: dropdown
+    attributes:
+      label: Windows 版本
+      options:
+        - Windows 11 x64
+        - Windows 10 22H2 x64
+        - 其他或未知
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 复现步骤
+      description: 从应用启动开始，写出最短可复现路径。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 预期与实际结果
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 已脱敏日志或截图
+      description: 可从托盘“打开日志”定位日志；提交前删除项目路径、凭据和私有内容。

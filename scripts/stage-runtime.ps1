@@ -86,7 +86,8 @@ Copy-Item -LiteralPath (Join-Path $runtimeHostRoot 'package-lock.json') -Destina
 Write-Host "Installing DSH $($runtimeLock.dsh.version), Market $($runtimeLock.market.version), and pnpm $($runtimeLock.pnpm.version) with npm ci..."
 Push-Location $hostResourceRoot
 try {
-    $npmArguments = @('ci', '--omit=dev', '--no-audit', '--fund=false', '--cache', $npmCache)
+    # rc.8 的 peer 图会让 npm 10 Arborist 长时间停在依赖放置；锁文件与 staging 统一采用该模式。
+    $npmArguments = @('ci', '--legacy-peer-deps', '--omit=dev', '--no-audit', '--fund=false', '--cache', $npmCache)
     if ($Offline) {
         $npmArguments += '--offline'
     }
@@ -99,7 +100,7 @@ finally {
     Pop-Location
 }
 
-# 上游 rc.6 未给 IFileDialog 传 owner；打包时固定补丁，避免 Node 作为独立任务栏窗口出现。
+# 上游目录选择器未给 IFileDialog 传 owner；打包时固定补丁，避免 Node 作为独立任务栏窗口出现。
 & (Join-Path $PSScriptRoot 'patch-directory-picker.ps1') -HostRoot $hostResourceRoot
 if ($LASTEXITCODE -ne 0) {
     throw "Directory picker patch failed with exit code $LASTEXITCODE."

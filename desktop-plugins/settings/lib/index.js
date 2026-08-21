@@ -14,7 +14,6 @@ const PROTECTED_BUNDLES = new Set([
   "@dsh-desktop/runtime-services",
 ]);
 const MANAGED_PLUGINS = Object.freeze([
-  { package: "dsh-at-file", label: "@ 文件引用" },
   { package: "@omdsh-dev/dsh-genui", label: "GenUI" },
   { package: "dsh-better-sidebar", label: "Better Sidebar" },
   { package: "@linxin666/dsh-client-ui-skin-center", label: "主题皮肤" },

@@ -1,0 +1,26 @@
+name: 功能建议
+description: 描述一个真实 DSH Desktop 工作流中的改进机会
+title: "[Feature] "
+labels: [enhancement, needs-triage]
+body:
+  - type: textarea
+    attributes:
+      label: 要解决的工作流问题
+      description: 说明当前任务、阻碍和影响，不要只描述一个控件。
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 期望行为
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: 范围与替代方案
+      description: 说明是否涉及 DSH 上游、插件、桌面壳或新平台。
+  - type: checkboxes
+    attributes:
+      label: 产品边界
+      options:
+        - label: 该建议不要求把项目扩张为通用多模型客户端
+          required: true

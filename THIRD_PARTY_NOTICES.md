@@ -7,15 +7,14 @@ The preview installer bundles the following third-party software:
 | Component | Pinned version | License / source |
 |---|---:|---|
 | Node.js | 22.22.3 | Node.js license, <https://github.com/nodejs/node> |
-| `@deepseek-ai/dsh` | 0.1.0-rc.6 | MIT, <https://www.npmjs.com/package/@deepseek-ai/dsh> |
-| `dshmarket` | 1.10.0 | MIT, <https://github.com/dsh-market/dsh-market> |
+| `@deepseek-ai/dsh` | 0.1.0-rc.8 | MIT, <https://www.npmjs.com/package/@deepseek-ai/dsh> |
+| `dshmarket` | 1.17.1 | MIT, <https://github.com/dsh-market/dsh-market> |
 | `pnpm` | 10.34.5 | MIT, <https://github.com/pnpm/pnpm> |
-| `dsh-at-file` | 0.6.0 | MIT, <https://github.com/omdsh-dev/dsh-at-file> |
-| `@omdsh-dev/dsh-genui` | 0.8.4 | MIT, <https://github.com/omdsh-dev/dsh-genui> |
-| `dsh-better-sidebar` | 0.12.2 | MIT, <https://github.com/omdsh-dev/DSH-better-sidebar> |
-| `@linxin666/dsh-client-ui-skin-center` | 0.2.2 | Apache-2.0, <https://github.com/zhu1090093659/dsh-web-ui> |
-| `@vectorize-io/hindsight-coding-agents` | 0.3.4 | MIT, <https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents> |
-| `@liustack/modlens` | 3.16.7 | MIT, <https://github.com/liustack/modlens> |
+| `@omdsh-dev/dsh-genui` | 0.8.6 | MIT, <https://github.com/omdsh-dev/dsh-genui> |
+| `dsh-better-sidebar` | 0.14.0 | MIT, <https://github.com/omdsh-dev/DSH-better-sidebar> |
+| `@linxin666/dsh-client-ui-skin-center` | 0.2.6 | Apache-2.0, <https://github.com/zhu1090093659/dsh-web-ui> |
+| `@vectorize-io/hindsight-coding-agents` | 0.4.1 | MIT, <https://github.com/vectorize-io/hindsight/tree/main/hindsight-integrations/coding-agents> |
+| `@liustack/modlens` | 3.22.1 | MIT, <https://github.com/liustack/modlens> |
 | `@cubee-slide/skills-mcp-manager` | 0.2.4 | MIT, <https://github.com/licn9901-arch/dsh-skills-mcp-manager> |
 | Tauri | 2.x | Apache-2.0 OR MIT, <https://github.com/tauri-apps/tauri> |
 | esbuild | 0.28.2 | MIT, <https://github.com/evanw/esbuild> |

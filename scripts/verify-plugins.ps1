@@ -32,7 +32,6 @@ if ($lock.schemaVersion -ne 2) {
 }
 $expectedOrder = @(
     '@dsh-desktop/runtime-services',
-    'dsh-at-file',
     '@omdsh-dev/dsh-genui',
     'dsh-better-sidebar',
     '@dsh-desktop/settings',

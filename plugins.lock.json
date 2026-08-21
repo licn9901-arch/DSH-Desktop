@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "dshVersion": "0.1.0-rc.6",
+  "dshVersion": "0.1.0-rc.8",
   "sharedPackages": [
     "@deepseek-ai/*",
     "cordis",
@@ -10,7 +10,7 @@
   "plugins": [
     {
       "package": "@dsh-desktop/runtime-services",
-      "version": "0.1.0-preview.12",
+      "version": "0.1.0-preview.13",
       "bundleId": "desktop-runtime-services",
       "license": "MIT",
       "source": {
@@ -36,52 +36,18 @@
       ]
     },
     {
-      "package": "dsh-at-file",
-      "version": "0.6.0",
-      "bundleId": "dsh-at-file",
-      "license": "MIT",
-      "source": {
-        "type": "github-tarball",
-        "repository": "omdsh-dev/dsh-at-file",
-        "tag": "v0.6.0",
-        "tagObject": "e579d0deb2295d5fea37a89244f8d584999be850",
-        "commit": "a967aeb1df52b57609e6512b9b7bfd38b7baa092",
-        "url": "https://api.github.com/repos/omdsh-dev/dsh-at-file/tarball/v0.6.0",
-        "sha256": "7988253659d63c648f29dbee2c16cee4e2fc085baf71b6efb545219b51b62b95",
-        "archive": "dsh-at-file-v0.6.0.tar.gz"
-      },
-      "requiredFiles": [
-        "lib/index.js",
-        "lib/client.js",
-        "cordis.patch.yml",
-        "LICENSE"
-      ],
-      "delivery": {
-        "serverEntries": ["lib/index.js"],
-        "clientEntries": ["lib/client.js"],
-        "assets": ["cordis.patch.yml"],
-        "runtimeExternals": [],
-        "nativeExternals": [],
-        "licenseFiles": ["LICENSE"]
-      },
-      "permissions": [
-        "搜索工作区路径",
-        "向输入框插入相对路径引用，不读取或注入文件内容"
-      ]
-    },
-    {
       "package": "@omdsh-dev/dsh-genui",
-      "version": "0.8.4",
+      "version": "0.8.6",
       "bundleId": "@omdsh-dev/dsh-genui",
       "license": "MIT",
       "source": {
         "type": "github-tarball",
         "repository": "omdsh-dev/dsh-genui",
-        "tag": "v0.8.4",
-        "commit": "1662a5d93b52b04f5dbb42c86483b1f53a3b33b4",
-        "url": "https://api.github.com/repos/omdsh-dev/dsh-genui/tarball/v0.8.4",
-        "sha256": "e71a110d155bca0c52f350750dd0a883b38809b562e5bb5762e224b81785b4fb",
-        "archive": "dsh-genui-v0.8.4.tar.gz"
+        "tag": "v0.8.6",
+        "commit": "2187fa48dfb05126850d3a1516be910718afdc79",
+        "url": "https://api.github.com/repos/omdsh-dev/dsh-genui/tarball/v0.8.6",
+        "sha256": "6ef84b7237910254a287070e9505d5ed8340edce8f7ca3be5afa25e25a221b98",
+        "archive": "dsh-genui-v0.8.6.tar.gz"
       },
       "requiredFiles": [
         "lib/index.js",
@@ -107,13 +73,13 @@
     },
     {
       "package": "dsh-better-sidebar",
-      "version": "0.12.2",
+      "version": "0.14.0",
       "bundleId": "dsh-better-sidebar",
       "license": "MIT",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-b9N/Ie9d8qz/ayyf6sa+8KAqRuM3i85QLpcyu5/zWGXfB440YOVIA0r2vEFG0HVmFBO8KfLLiIgG59yo0JkK9Q=="
+        "integrity": "sha512-bEjHvHnlNnKXkud+/A/kZ4VJvPt79ggHy/mKqEKfODPqLFpvdz7ZcoMCI3K4naPOw/0Wlqp6J3UDR9h2Wm6w4w=="
       },
       "requiredFiles": [
         "lib/index.js",
@@ -137,7 +103,7 @@
     },
     {
       "package": "@dsh-desktop/settings",
-      "version": "0.1.0-preview.12",
+      "version": "0.1.0-preview.13",
       "bundleId": "desktop-settings",
       "license": "MIT",
       "source": {
@@ -166,13 +132,13 @@
     },
     {
       "package": "@linxin666/dsh-client-ui-skin-center",
-      "version": "0.2.2",
+      "version": "0.2.6",
       "bundleId": "ui-skin-center",
       "license": "Apache-2.0",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-+yxMKY6ljKoJsvNYbKn6BxOXKFbXDFRTI4UKCMfiG13VwNpsqvpQC7GjL/mYbNn8joolEWlHgSdhuKAS+J4bGg=="
+        "integrity": "sha512-Qva1jjP01ca0tsaidcyQ13NhbjLi8moJ5Rjp2NgzERPRntKNrEB+iFmYwqo9tERIxazAOzfR2BXS/HsGjqEbjw=="
       },
       "requiredFiles": [
         "lib/index.js",
@@ -198,13 +164,13 @@
     },
     {
       "package": "@vectorize-io/hindsight-coding-agents",
-      "version": "0.3.4",
+      "version": "0.4.1",
       "bundleId": "hindsight-coding-agents",
       "license": "MIT",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-7KgA6YybqMd64gVekhYnzBZ5F33KLpzNqnHqTynE29HPWRlP7UZScOi84VUjoiZZgsDCJPJ4B8pKbgW1axo6RA=="
+        "integrity": "sha512-kJxvHFOWalfDg7xtAuPGMRJ/v8pTGulA+8g54H/nXOjcXnqdOy/qE2EupAJaN5VCWf152Ps/X/LjXc4UVG0tSw=="
       },
       "requiredFiles": [
         "dist/dsh.js",
@@ -226,13 +192,13 @@
     },
     {
       "package": "@liustack/modlens",
-      "version": "3.16.7",
+      "version": "3.22.1",
       "bundleId": "modlens",
       "license": "MIT",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-Zq0649PSVx6V6SEijsiSMsG3JNG9goMtEsBnd1T56jn7lPpI864sK6G1pPm6Uyac5rTo1W0YhqEP1POCXa1LpQ=="
+        "integrity": "sha512-ayeyE0TBhn+Vq9gJsskUyaOXBAx8JGAJauD49nnqR+Te6S1zDcx1YqyuPmVP6LRf9bjzdfny/E+e+Ka8WN2wpw=="
       },
       "requiredFiles": [
         "dsh/index.js",
@@ -290,7 +256,7 @@
       "name": "genui",
       "sourcePackage": "@omdsh-dev/dsh-genui",
       "sourceFile": "SKILL.md",
-      "version": "0.8.4",
+      "version": "0.8.6",
       "sha256": "052681f96898450e25c8080a532f48d2e57ce72d5bbdcbe05d23ca22b79beb2f"
     }
   ]
