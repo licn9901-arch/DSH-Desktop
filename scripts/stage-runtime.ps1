@@ -86,7 +86,7 @@ Copy-Item -LiteralPath (Join-Path $runtimeHostRoot 'package-lock.json') -Destina
 Write-Host "Installing DSH $($runtimeLock.dsh.version), Market $($runtimeLock.market.version), and pnpm $($runtimeLock.pnpm.version) with npm ci..."
 Push-Location $hostResourceRoot
 try {
-    # rc.8 的 peer 图会让 npm 10 Arborist 长时间停在依赖放置；锁文件与 staging 统一采用该模式。
+    # Market 的可选 prerelease peer 会让 npm 10 额外放置旧 DSH 包；锁文件与 staging 统一忽略 peer 自动安装。
     $npmArguments = @('ci', '--legacy-peer-deps', '--omit=dev', '--no-audit', '--fund=false', '--cache', $npmCache)
     if ($Offline) {
         $npmArguments += '--offline'

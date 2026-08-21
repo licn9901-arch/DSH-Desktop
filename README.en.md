@@ -59,7 +59,7 @@
 
 - Starts local `dsh web` on a random loopback port and validates its readiness URL before loading WebView2.
 - Single instance, close to tray, serialized Host restart, and explicit-exit cleanup.
-- Plugin Market, Better Sidebar, GenUI, Skin Center, project memory, ModLens, and Skills/MCP management.
+- Plugin Market, Better Sidebar, GenUI, Skin Center, project memory, Skills/MCP management, and DSH-native multimodal model support.
 - Pinned offline runtime and plugins without overwriting same-name user installations or user-disabled state.
 - Host pages receive no Tauri capability; external HTTP/HTTPS links open in the system browser.
 

@@ -80,6 +80,10 @@ test("只接受 web profile 白名单，并保护基础 bundle", () => {
     () => assertToggleBody({ profile: "web", package: "dsh-at-file", enabled: false }),
     /unknown-managed-plugin/,
   );
+  assert.throws(
+    () => assertToggleBody({ profile: "web", package: "@liustack/modlens", enabled: false }),
+    /unknown-managed-plugin/,
+  );
 });
 
 function fakeCredentials(initial = undefined) {
@@ -181,6 +185,7 @@ test("并发开关串行合并，列表返回最终状态", async () => {
   ]);
   const rows = await listManagedPlugins(path);
   assert.equal(rows.some((row) => row.package === "dsh-at-file"), false);
+  assert.equal(rows.some((row) => row.package === "@liustack/modlens"), false);
   assert.equal(rows.find((row) => row.package === "dsh-better-sidebar").enabled, false);
   assert.equal(rows.find((row) => row.package === "@omdsh-dev/dsh-genui").enabled, false);
 });

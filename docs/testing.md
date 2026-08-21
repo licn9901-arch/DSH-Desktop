@@ -75,7 +75,7 @@ pwsh -NoProfile -File scripts/installer-smoke.ps1 `
   -SkipMarket
 ```
 
-测试使用系统临时目录下的显式 runtime 根，验证四个安装资源、provision、真实 Host 与 9 个内置 bundle
+测试使用系统临时目录下的显式 runtime 根，验证四个安装资源、provision、真实 Host 与插件锁中的全部内置 bundle
 readiness、candidate 晋升、single-instance、托盘生命周期、卸载 runtime 以及保留 `~/.dsh` sentinel。
 测试 runtime 根会写入安装元数据；卸载前必须规范化并限制到固定临时目录前缀，不能接受任意删除路径。
 
@@ -125,7 +125,8 @@ preview.8 最终报告为 legacy P95 5,533 ms、payload P95 5,547 ms、门限 5,
 npm run release:gate -- `
   -LegacyInstaller '<preview.7 legacy installer>' `
   -PayloadInstaller '<current payload installer>' `
-  -PreviousPayloadInstaller '<previous payload installer>'
+  -PreviousPayloadInstaller '<previous payload installer>' `
+  -PreviousPayloadAssetDigest 'sha256:<GitHub Asset digest>'
 ```
 
 正式门禁只接受完全干净的 Git 工作区。构建、审计、兼容、复现、升级、性能和总门禁报告必须携带同一个

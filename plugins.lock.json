@@ -1,6 +1,6 @@
 {
   "schemaVersion": 2,
-  "dshVersion": "0.1.0-rc.8",
+  "dshVersion": "0.1.1-rc.2",
   "sharedPackages": [
     "@deepseek-ai/*",
     "cordis",
@@ -73,13 +73,13 @@
     },
     {
       "package": "dsh-better-sidebar",
-      "version": "0.14.0",
+      "version": "0.15.0",
       "bundleId": "dsh-better-sidebar",
       "license": "MIT",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-bEjHvHnlNnKXkud+/A/kZ4VJvPt79ggHy/mKqEKfODPqLFpvdz7ZcoMCI3K4naPOw/0Wlqp6J3UDR9h2Wm6w4w=="
+        "integrity": "sha512-9Ox7wvwhBRlgMIxVRKqar26eRp1GnAAOO5a0QrxydpUbuJdBIpUFOHGcAI+xX6ddJGwAdELFdMsyMWAtJEhAUQ=="
       },
       "requiredFiles": [
         "lib/index.js",
@@ -132,13 +132,13 @@
     },
     {
       "package": "@linxin666/dsh-client-ui-skin-center",
-      "version": "0.2.6",
+      "version": "0.2.7",
       "bundleId": "ui-skin-center",
       "license": "Apache-2.0",
       "source": {
         "type": "npm",
         "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-Qva1jjP01ca0tsaidcyQ13NhbjLi8moJ5Rjp2NgzERPRntKNrEB+iFmYwqo9tERIxazAOzfR2BXS/HsGjqEbjw=="
+        "integrity": "sha512-QyY1s3gdlXagC5mYHTgiBUj2J0u6z1wjaPn/TQXB6y+2+TBhrMPFHmZpmwq2RE8dy0cc4E2MlHX10IwX8lPWfw=="
       },
       "requiredFiles": [
         "lib/index.js",
@@ -188,36 +188,6 @@
       "permissions": [
         "仅对用户显式 opt-in 的 DSH 项目执行记忆 retain/recall",
         "连接用户后续配置的 Hindsight 服务"
-      ]
-    },
-    {
-      "package": "@liustack/modlens",
-      "version": "3.22.1",
-      "bundleId": "modlens",
-      "license": "MIT",
-      "source": {
-        "type": "npm",
-        "registry": "https://registry.npmjs.org/",
-        "integrity": "sha512-ayeyE0TBhn+Vq9gJsskUyaOXBAx8JGAJauD49nnqR+Te6S1zDcx1YqyuPmVP6LRf9bjzdfny/E+e+Ka8WN2wpw=="
-      },
-      "requiredFiles": [
-        "dsh/index.js",
-        "dsh/client.js",
-        "dsh/vision-schema.json",
-        "cordis.patch.yml",
-        "LICENSE"
-      ],
-      "delivery": {
-        "serverEntries": ["dsh/index.js"],
-        "clientEntries": ["dsh/client.js"],
-        "assets": ["dsh/vision-schema.json", "cordis.patch.yml"],
-        "runtimeExternals": [],
-        "nativeExternals": [],
-        "licenseFiles": ["LICENSE"]
-      },
-      "permissions": [
-        "读取用户显式提供给模型的图片",
-        "调用用户配置的视觉端点或本机 Agent CLI"
       ]
     },
     {

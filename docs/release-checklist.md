@@ -1,5 +1,8 @@
 # 预览版发布检查表
 
+每周的版本盘点、选型依据和发布结果统一记录在
+[DSH 桌面版每周版本同步](weekly-desktop-release.md)；本检查表只负责候选构建与发布门禁。
+
 ## Preview.8-11 验收记录
 
 preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；preview.9 采用 solid LZMA，最终安装器为
@@ -11,7 +14,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 ## 版本与锁定输入
 
 - [ ] 版本号与 `v*` 标签一致。
-- [ ] 目标仅为 Windows x64，Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`、pnpm `10.34.5`。
+- [ ] 目标仅为 Windows x64；Node、DSH、Market 与 pnpm 版本和当周版本矩阵、`runtime.lock.json` 一致。
 - [ ] `runtime.lock.json` 与 `plugins.lock.json` 均为 schema 2，integrity、归档 SHA-256 和 package lock 匹配。
 - [ ] 每个插件的 delivery 入口、资产、runtime/native external 和许可证声明完整。
 - [ ] staged 边界不包含 resources、cache、target、日志、本机路径或安装包。
@@ -44,7 +47,8 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] 失败后 package、lock、workspace、Cordis patch 与 bundle 状态字节一致，旧依赖树恢复。
 - [ ] 运行时不使用 `--force`、全局 pnpm、其他 major 或循环恢复。
 - [ ] 官方本地插件绝对 `.ts` 路径、函数/对象/类、`inject`、`ctx.effect()` 清理和 patch 顺序通过。
-- [ ] DSH Web、Market、9 个内置 bundle、用户插件、PTY、sharp、GenUI、Hindsight、ModLens、Skills/MCP 和主题通过。
+- [ ] DSH Web、Market、插件锁中的全部内置 bundle、用户插件、PTY、sharp、GenUI、Hindsight、Skills/MCP 和主题通过。
+- [ ] 原生多模态模型完成图片上传、缩放、格式转换和复用验证；纯文本模型不显示为具备视觉能力。
 
 ## Provision、安装与回滚
 
@@ -65,7 +69,7 @@ preview.8 第一轮和 preview.9 第二轮公开 payload 门禁均已通过；pr
 - [ ] CoreReady 后崩溃、插件永不完成和恢复路径最多重试一次。
 - [ ] 托盘重启严格执行插件 prepare、Host readiness、commit；失败先 rollback 再恢复一次。
 - [ ] 添加工作区时原生目录选择器绑定主窗口，任务栏不出现独立 Node 窗口。
-- [ ] 正式 payload 安装器冒烟覆盖 candidate 晋升和 9 个内置 bundle readiness。
+- [ ] 正式 payload 安装器冒烟覆盖 candidate 晋升和插件锁中全部内置 bundle 的 readiness。
 - [ ] legacy 与 payload 使用相同 seed profile，预热后交替完成 20 对 warm 启动并记录 3 次 cold。
 - [ ] payload 启动 P95 劣化不超过 5% 或 100 ms，两者取较大值。
 

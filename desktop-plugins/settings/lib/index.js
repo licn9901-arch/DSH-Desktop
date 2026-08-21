@@ -18,7 +18,6 @@ const MANAGED_PLUGINS = Object.freeze([
   { package: "dsh-better-sidebar", label: "Better Sidebar" },
   { package: "@linxin666/dsh-client-ui-skin-center", label: "主题皮肤" },
   { package: "@vectorize-io/hindsight-coding-agents", label: "Hindsight 记忆" },
-  { package: "@liustack/modlens", label: "ModLens 视觉" },
   { package: "@cubee-slide/skills-mcp-manager", label: "Skills / MCP Manager" },
 ]);
 const TOGGLEABLE = new Set(MANAGED_PLUGINS.map((item) => item.package));

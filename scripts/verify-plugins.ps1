@@ -37,7 +37,6 @@ $expectedOrder = @(
     '@dsh-desktop/settings',
     '@linxin666/dsh-client-ui-skin-center',
     '@vectorize-io/hindsight-coding-agents',
-    '@liustack/modlens',
     '@cubee-slide/skills-mcp-manager'
 )
 if (($lock.plugins.package -join '|') -ne ($expectedOrder -join '|')) {

@@ -1,8 +1,8 @@
 # 桌面运行时与安装包优化设计
 
 本文是 DeepSeek Harness Desktop 的运行时交付、升级回滚和打包性能契约。实现基线固定为
-`@deepseek-ai/dsh@0.1.0-rc.6`（npm integrity 见 `runtime.lock.json`）、Node.js `22.22.3`、
-`dshmarket@1.10.0`、`pnpm@10.34.5` 和 Windows x64。上游概念说明固定参考 rc.6 发布 commit
+`@deepseek-ai/dsh@0.1.1-rc.2`（npm integrity 见 `runtime.lock.json`）、Node.js `22.22.3`、
+`dshmarket@1.17.1`、`pnpm@10.34.5` 和 Windows x64。上游概念说明固定参考 rc.8 发布 commit
 [`15148dbd` 的 DSH 官方基础文档](https://github.com/deepseek-ai/deepseek-harness/blob/15148dbd9a1d1f1ef1a26e5749b32af0cd663935/docs/user/develop/basic/index.md)，
 行为判定以锁定 npm 包的实际入口、配置和 loader smoke 为准，不跟随主分支文档漂移。
 
@@ -72,6 +72,12 @@ preview.10 将默认构建切换为 payload。Skin Center 画廊的 26 张预览
 启动中，legacy P50/P95 为 7,662/11,628 ms，payload 为 7,921/9,707 ms，门限为 12,210 ms；各 3 次
 cold 为 legacy 43,969/25,106/42,109 ms、payload 8,833/11,089/12,494 ms。
 
+preview.13 的 Sidebar 0.15.0 已把 Mermaid 完整内联到浏览器懒加载 chunk。payload staging 根据 npm
+lockfile 的真实依赖图裁剪只由该已内联依赖可达的 112 个 package，并保留仍被其他插件引用的共享节点。
+裁剪后 payload 为 11,329 个展开文件、242,193,184 字节，三个 ZIP 共 93,159,595 字节（88.84 MiB），
+继续满足 90 MiB 压缩预算，不需要放宽安装器 100 MiB 的发布门限。正式安装器大小和两次可复现构建结果
+仍以绑定 release commit 的门禁报告为准。
+
 preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902/5,533 ms，payload 为
 4,973/5,547 ms，门限为 5,810 ms；各 3 次 cold 为 legacy 17,278/16,902/17,827 ms、payload
 6,002/5,377/5,416 ms。公开 preview.7 仅是 SHA-256 为
@@ -81,7 +87,7 @@ preview.8 最终同机安装版 20 对 warm 启动中，legacy P50/P95 为 4,902
 
 ### 锁文件
 
-`runtime.lock.json` schema 2 只允许 Node `22.22.3`、DSH `0.1.0-rc.6`、Market `1.10.0`
+`runtime.lock.json` schema 2 只允许 Node `22.22.3`、DSH `0.1.1-rc.2`、Market `1.17.1`
 和 pnpm `10.34.5`。构建不得探测或调用全局 pnpm，也不得下载另一个 major。
 
 原 `pnpm@10.33.2` pin 因 high advisories 被废止。批准的 `10.34.5` 使用 registry integrity
@@ -245,7 +251,7 @@ example 在构建期运行。
 - runtime-services fixture：明确错误识别、字节快照、单次重建、重试失败恢复、PATH/Git 环境隔离；
 - payload 单测：摘要、截断 ZIP、ZIP bomb、路径穿越、ADS、大小写冲突、并发 provision、中断恢复、
   state 晋升/回滚和垃圾清理；
-- 真实 loader/Host：DSH Web、9 个内置 bundle、PTY、sharp、GenUI、Hindsight、ModLens、Skills/MCP、主题；
+- 真实 loader/Host：DSH Web、插件锁中的 7 个内置 bundle、PTY、sharp、GenUI、Hindsight、Skills/MCP、主题；
 - 启动 fast path：Windows junction 使用 Win32 路径语义比较，健康 active 不重建链接；插件准备与 WebView2 初始化并行；
 - 安装器：clean install、candidate 晋升、single-instance、关闭到托盘、进程树退出、卸载 runtime 且保留
   profile；

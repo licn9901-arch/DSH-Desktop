@@ -1499,8 +1499,40 @@ fn plan_profile(
     current_bundles.retain(|bundle| bundle != LEGACY_SIDE_PANEL);
     insert_market_bundle(&mut current_bundles);
 
-    // 只迁移仍与桌面 marker 匹配的旧 Skills/MCP 依赖；用户替换的来源保持原样。
     let mut removed_packages = Vec::new();
+    let locked_packages = lock
+        .plugins
+        .iter()
+        .map(|plugin| plugin.package.as_str())
+        .chain(
+            lock.transitive_packages
+                .iter()
+                .map(|dependency| dependency.package.as_str()),
+        )
+        .collect::<BTreeSet<_>>();
+    let specially_migrated_packages = BTreeSet::from([
+        LEGACY_SKILLS_MCP_BUNDLE,
+        LEGACY_DESKTOP_SETTINGS_BUNDLE,
+        LEGACY_SKINS_BUNDLE,
+    ]);
+    // 锁文件退役插件时只回收仍由桌面 marker 持有的依赖；用户替换为其他来源后继续拥有它。
+    for (package, record) in &state.managed {
+        if locked_packages.contains(package.as_str())
+            || specially_migrated_packages.contains(package.as_str())
+        {
+            continue;
+        }
+        let current_dependency = dependency_values.get(package).and_then(Value::as_str);
+        let still_owned = current_dependency
+            .is_some_and(|dependency| dependency == link_spec(&record.link_target));
+        if still_owned || current_dependency.is_none() {
+            dependency_values.remove(package);
+            current_bundles.retain(|bundle| bundle != package);
+            removed_packages.push(package.clone());
+        }
+    }
+
+    // 只迁移仍与桌面 marker 匹配的旧 Skills/MCP 依赖；用户替换的来源保持原样。
     let legacy_skills_enabled = state
         .managed
         .get(LEGACY_SKILLS_MCP_BUNDLE)
@@ -2278,6 +2310,68 @@ mod tests {
         );
         assert!(!plan.next_state.managed.contains_key("dsh-at-file"));
         assert!(!plan.managed_packages.contains(&"dsh-at-file".to_owned()));
+    }
+
+    #[test]
+    fn retired_desktop_plugins_are_removed_only_while_still_owned() {
+        let mut next_lock = lock();
+        next_lock.plugins.retain(|plugin| {
+            plugin.package != "dsh-at-file" && plugin.package != "@liustack/modlens"
+        });
+        let mut managed = BTreeMap::new();
+        for package in ["dsh-at-file", "@liustack/modlens"] {
+            managed.insert(
+                package.to_owned(),
+                ManagedPluginState {
+                    version: "old".to_owned(),
+                    link_target: format!(r"C:\managed\{package}"),
+                    bundle_enabled: true,
+                },
+            );
+        }
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old".to_owned(),
+            managed,
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let profile = json!({
+          "dependencies": {
+            "dsh-at-file": "link:C:/managed/dsh-at-file",
+            "@liustack/modlens": "https://example.test/user-modlens.tgz",
+            "user-plugin": "1.2.3"
+          },
+          "dsh": {"profile": {"bundles": [
+            BASE_BUNDLE,
+            "dsh-at-file",
+            "@liustack/modlens",
+            "user-plugin"
+          ]}}
+        });
+
+        let plan = plan_profile(
+            profile,
+            &state,
+            &next_lock,
+            Path::new(r"C:\next\node_modules"),
+            "digest-retired",
+        )
+        .unwrap();
+
+        assert!(plan.profile["dependencies"].get("dsh-at-file").is_none());
+        assert!(!bundles(&plan.profile).contains(&"dsh-at-file"));
+        assert!(plan.removed_packages.contains(&"dsh-at-file".to_owned()));
+        assert!(!plan.next_state.managed.contains_key("dsh-at-file"));
+        assert_eq!(
+            plan.profile["dependencies"]["@liustack/modlens"],
+            "https://example.test/user-modlens.tgz"
+        );
+        assert!(bundles(&plan.profile).contains(&"@liustack/modlens"));
+        assert!(!plan
+            .removed_packages
+            .contains(&"@liustack/modlens".to_owned()));
+        assert_eq!(plan.profile["dependencies"]["user-plugin"], "1.2.3");
     }
 
     #[test]
@@ -3241,6 +3335,81 @@ mod tests {
             .path()
             .join("home/.dsh/desktop-managed/plugins-state.json")
             .exists());
+    }
+
+    #[test]
+    fn uncommitted_retired_plugin_removal_is_fully_rolled_back() {
+        let (root, manager, linker) = manager_fixture();
+        let retired_target = root.path().join("managed/old-modlens");
+        let retired_link = root
+            .path()
+            .join("home/.dsh/profiles/web/node_modules/@liustack/modlens");
+        let original_profile = serde_json::to_vec(&json!({
+            "dependencies": {
+                "@liustack/modlens": link_spec(&normalized_path(&retired_target))
+            },
+            "dsh": {"profile": {"bundles": [BASE_BUNDLE, "@liustack/modlens"]}}
+        }))
+        .unwrap();
+        root.write("home/.dsh/profiles/web/package.json", &original_profile);
+        let state = PluginInstallState {
+            schema_version: 1,
+            lock_digest: "old-lock".to_owned(),
+            managed: BTreeMap::from([(
+                "@liustack/modlens".to_owned(),
+                ManagedPluginState {
+                    version: "3.22.1".to_owned(),
+                    link_target: normalized_path(&retired_target),
+                    bundle_enabled: true,
+                },
+            )]),
+            managed_skills: BTreeMap::new(),
+            sidebar_defaults_seeded: true,
+        };
+        let original_state = serde_json::to_vec(&state).unwrap();
+        root.write(
+            "home/.dsh/desktop-managed/plugins-state.json",
+            &original_state,
+        );
+        linker
+            .links
+            .lock()
+            .unwrap()
+            .insert(retired_link.clone(), retired_target.clone());
+
+        let transaction = manager.prepare().unwrap();
+        assert!(!linker.links.lock().unwrap().contains_key(&retired_link));
+        let prepared_profile: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(prepared_profile["dependencies"]
+            .get("@liustack/modlens")
+            .is_none());
+        assert!(!bundles(&prepared_profile).contains(&"@liustack/modlens"));
+
+        drop(transaction);
+        assert_eq!(
+            linker.links.lock().unwrap().get(&retired_link),
+            Some(&retired_target)
+        );
+        let restored_profile: Value = serde_json::from_slice(
+            &fs::read(root.path().join("home/.dsh/profiles/web/package.json")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            restored_profile["dependencies"]["@liustack/modlens"],
+            link_spec(&normalized_path(&retired_target))
+        );
+        assert!(bundles(&restored_profile).contains(&"@liustack/modlens"));
+        assert_eq!(
+            fs::read(
+                root.path()
+                    .join("home/.dsh/desktop-managed/plugins-state.json"),
+            )
+            .unwrap(),
+            original_state
+        );
     }
 
     #[test]

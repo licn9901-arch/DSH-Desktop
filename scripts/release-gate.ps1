@@ -1,19 +1,19 @@
 param(
     [Parameter(Mandatory = $true)][string]$LegacyInstaller,
     [Parameter(Mandatory = $true)][string]$PayloadInstaller,
-    [string]$PreviousPayloadInstaller
+    [string]$PreviousPayloadInstaller,
+    [string]$PreviousPayloadAssetDigest
 )
 
 $ErrorActionPreference = 'Stop'
 $repoRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
 . (Join-Path $PSScriptRoot 'release-installer-isolation.ps1')
 . (Join-Path $PSScriptRoot 'release-source.ps1')
+. (Join-Path $PSScriptRoot 'release-gate-helpers.ps1')
 $sourceCommit = Get-DshReleaseSourceCommit -RepoRoot $repoRoot
 $package = Get-Content -LiteralPath (Join-Path $repoRoot 'package.json') -Raw | ConvertFrom-Json
 $runtimeLock = Get-Content -LiteralPath (Join-Path $repoRoot 'runtime.lock.json') -Raw | ConvertFrom-Json
-$match = [regex]::Match($package.version, '^0\.1\.0-preview\.(8|9|10|11)$')
-if (-not $match.Success) { throw "Release gate only accepts preview.8 through preview.11, got $($package.version)." }
-$preview = [int]$match.Groups[1].Value
+$preview = Get-DshPreviewNumber -Version $package.version
 $reportRoot = Join-Path $repoRoot ".release-work\$($package.version)\reports"
 $jsonPath = Join-Path $reportRoot 'release-gate.json'
 $markdownPath = Join-Path $reportRoot 'release-gate.md'
@@ -76,15 +76,18 @@ if ($preview -ge 9 -and $null -eq $previousPayloadPath) {
     throw "preview.$preview requires -PreviousPayloadInstaller."
 }
 $previousReports = @{}
+$previousEvidence = $null
 if ($preview -ge 9) {
-    foreach ($number in 8..($preview - 1)) {
+    foreach ($number in 8..([Math]::Min(11, $preview - 1))) {
         $previousReports[$number] = Assert-PreviousPreviewPassed $number
     }
-    $previousPayloadHash = (Get-FileHash -LiteralPath $previousPayloadPath -Algorithm SHA256).Hash.ToLowerInvariant()
-    $expectedPreviousHash = $previousReports[$preview - 1].installers.payload.sha256
-    if ($previousPayloadHash -ne $expectedPreviousHash) {
-        throw "preview.$($preview - 1) installer hash does not match its finalized gate report."
-    }
+    $previousVersion = "0.1.0-preview.$($preview - 1)"
+    $previousGatePath = Join-Path $repoRoot ".deploy-artifacts\$previousVersion\release-gate.json"
+    $previousEvidence = Get-DshPreviousInstallerEvidence `
+        -InstallerPath $previousPayloadPath `
+        -ExpectedVersion $previousVersion `
+        -GateReportPath $previousGatePath `
+        -AssetDigest $PreviousPayloadAssetDigest
 }
 
 $phases = @()
@@ -173,6 +176,7 @@ finally {
         desktopVersion = $package.version
         sourceCommit = $sourceCommit
         previewNumber = $preview
+        previousPayloadEvidence = $previousEvidence
         installers = [ordered]@{
             legacy = [ordered]@{ path = $legacyPath; sha256 = $legacyHash }
             payload = [ordered]@{

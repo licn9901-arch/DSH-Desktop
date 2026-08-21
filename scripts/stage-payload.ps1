@@ -193,6 +193,7 @@ $keyInputs = @(
     'scripts\patch-directory-picker.ps1',
     'scripts\stage-plugins.ps1',
     'scripts\optimize-plugin-previews.mjs',
+    'scripts\prune-plugin-client-dependencies.mjs',
     'scripts\stage-payload.ps1'
 )
 $keyLines = @(
@@ -266,6 +267,11 @@ try {
     $sharpWasm = Join-Path $hostSource 'node_modules\@img\sharp-wasm32'
     if (Test-Path -LiteralPath $sharpWasm) { Remove-Item -LiteralPath $sharpWasm -Recurse -Force }
     Remove-PluginClientDuplicates -NodeModules (Join-Path $pluginSource 'node_modules')
+    & (Join-Path $nodeSource 'node.exe') (Join-Path $PSScriptRoot 'prune-plugin-client-dependencies.mjs') `
+        --lock (Join-Path $repoRoot 'plugin-runtime\package-lock.json') `
+        --node-modules (Join-Path $pluginSource 'node_modules') `
+        --owner 'dsh-better-sidebar' --dependency 'mermaid'
+    if ($LASTEXITCODE -ne 0) { throw 'Plugin client dependency pruning failed.' }
     Remove-NodeIgnoredModuleFormats -NodeModules (Join-Path $hostSource 'node_modules')
     & (Join-Path $nodeSource 'node.exe') (Join-Path $PSScriptRoot 'optimize-plugin-previews.mjs') `
         --host-node-modules (Join-Path $hostSource 'node_modules') --plugin-root $pluginSource

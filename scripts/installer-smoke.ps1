@@ -58,8 +58,6 @@ $bundledPlugins = @(
     (Join-Path $installRoot 'plugins\node_modules\@linxin666\dsh-skins\cordis.patch.yml'),
     (Join-Path $installRoot 'plugins\node_modules\@linxin666\dsh-client-ui-skin-center\lib\index.js'),
     (Join-Path $installRoot 'plugins\node_modules\@vectorize-io\hindsight-coding-agents\dist\dsh.js'),
-    (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\index.js'),
-    (Join-Path $installRoot 'plugins\node_modules\@liustack\modlens\dsh\client.js'),
     (Join-Path $installRoot 'plugins\node_modules\@cubee-slide\skills-mcp-manager\lib\index.js'),
     (Join-Path $installRoot 'plugins\node_modules\@cubee-slide\skills-mcp-manager\lib\client.js')
 )

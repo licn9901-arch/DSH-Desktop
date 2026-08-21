@@ -59,7 +59,7 @@
 
 - 本地 `dsh web` 通过随机回环端口启动，严格校验就绪地址后才载入 WebView2。
 - 单实例、关闭到托盘、Host 串行重启和显式退出清理。
-- 插件市场、Better Sidebar、GenUI、皮肤中心、项目记忆、ModLens、Skills/MCP 管理。
+- 插件市场、Better Sidebar、GenUI、皮肤中心、项目记忆、Skills/MCP 管理，以及 DSH 原生多模态模型支持。
 - 固定版本的离线运行时与插件；不会覆盖用户自行安装的同名插件或主动禁用状态。
 - Host 页面不获得 Tauri capability；外部 HTTP/HTTPS 链接交给系统浏览器。
 
