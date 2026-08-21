@@ -30,7 +30,19 @@
 > [!IMPORTANT]
 > This is a community-maintained project. It is not an official DeepSeek product and does not represent DeepSeek.
 
-![Plugin search, workspace, and installation in DeepSeek Harness Desktop](https://dsh.cubee.chat/assets/plugin-market-live.v1.png)
+![A complete DeepSeek Harness Desktop workflow from project selection and file reference through task execution and result review](https://dsh.cubee.chat/assets/desktop-task-demo.v1.gif)
+
+<p align="center"><sub>Select a project, reference files, run a task, and review tool progress, the GenUI summary, and the generated result.</sub></p>
+
+## Task Demo
+
+![GenUI test summary after a completed task in DeepSeek Harness Desktop](https://dsh.cubee.chat/assets/desktop-genui-result.v1.webp)
+
+<p align="center"><sub>After a task completes, changed files and 17 test results appear together in the GenUI summary.</sub></p>
+
+![The website generated and previewed by DeepSeek Harness Desktop](https://dsh.cubee.chat/assets/desktop-task-result.v1.webp)
+
+<p align="center"><sub>Preview the generated website directly in the workspace.</sub></p>
 
 ## Current Preview
 
@@ -46,13 +58,23 @@
 
 1. Get the installer from the [Windows download page](https://dsh.cubee.chat/en/download/windows/) and follow the SHA-256 verification instructions.
 2. Install and launch the app, then wait for the local DSH Host to become ready.
-3. Select a project, reference files, run a task, and inspect file, Diff, or GenUI results.
+3. Select a project, reference files, run a task, and inspect tool progress, changed files, tests, or GenUI results.
+
+## Skin Themes and Extensions
+
+![Four skin themes in DeepSeek Harness Desktop](https://dsh.cubee.chat/assets/theme-gallery-local.v1.webp)
+
+<p align="center"><sub>Preview a theme in Skin Center, then apply it to your workspace.</sub></p>
+
+![DeepSeek Harness Desktop plugin market searching for GenUI and showing its installation state](https://dsh.cubee.chat/assets/plugin-market-local.v2.webp)
+
+![DeepSeek Harness Desktop Skills list and MCP settings](https://dsh.cubee.chat/assets/skills-mcp-local.v2.webp)
 
 ## Built for These Workflows
 
 - Use DSH directly on Windows without maintaining Node.js, pnpm, and a separate web service.
 - Keep conversations, files, Git, a local terminal, the plugin market, and interactive GenUI in one workspace.
-- Manage project Skills and MCP connections while retaining local-first, inspectable runtime boundaries.
+- Manage project Skills and MCP connections while keeping a local-first workflow.
 - Continue tasks after closing the window, then restore or restart the DSH Host from the system tray.
 
 ## Included Capabilities
@@ -93,4 +115,4 @@ Maintainer contracts for release builds, payloads, pnpm compatibility, PID lifec
 
 This repository maintains the Tauri shell, self-contained runtime, Windows installer, and security boundaries. It does not rewrite the DSH Web UI or Agent core. DSH, Market, pnpm, the web frontend, and third-party plugins are pinned by lockfile and retain their upstream licenses. The desktop shell uses the [MIT License](LICENSE).
 
-If the project solves a Windows DSH installation or workflow problem for you, Star the repository. More importantly, complete one real task and report any installation or startup issue.
+If the project solves a Windows DSH installation or workflow problem for you, consider starring the repository. Report any installation or startup issue through GitHub Issues.

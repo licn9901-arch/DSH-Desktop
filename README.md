@@ -30,7 +30,19 @@
 > [!IMPORTANT]
 > 本项目由社区维护，不是 DeepSeek 官方产品，也不代表 DeepSeek 官方立场。
 
-![DeepSeek Harness Desktop 插件市场、工作区与插件安装界面](https://dsh.cubee.chat/assets/plugin-market-live.v1.png)
+![DeepSeek Harness Desktop 从选择项目、引用文件到执行任务和查看结果的完整流程](https://dsh.cubee.chat/assets/desktop-task-demo.v1.gif)
+
+<p align="center"><sub>选择项目、引用文件、执行任务，并查看工具进度、GenUI 汇总和生成结果。</sub></p>
+
+## 任务演示
+
+![DeepSeek Harness Desktop 完成任务后的 GenUI 测试摘要](https://dsh.cubee.chat/assets/desktop-genui-result.v1.webp)
+
+<p align="center"><sub>任务完成后，修改文件与 17 项测试结果会集中显示在 GenUI 摘要中。</sub></p>
+
+![DeepSeek Harness Desktop 生成并预览的网页结果](https://dsh.cubee.chat/assets/desktop-task-result.v1.webp)
+
+<p align="center"><sub>生成的网页可以直接在工作区中预览。</sub></p>
 
 ## 当前预览版
 
@@ -46,13 +58,23 @@
 
 1. 从[官网 Windows 下载页](https://dsh.cubee.chat/download/windows/)获取安装包，并按页面说明核对 SHA-256。
 2. 安装后启动应用，等待本地 DSH Host 就绪。
-3. 选择项目目录，在对话中引用文件、执行任务并查看文件、Diff 或 GenUI 结果。
+3. 选择项目目录，在对话中引用文件、执行任务并检查工具进度、修改文件、测试或 GenUI 结果。
+
+## 皮肤主题与扩展能力
+
+![DeepSeek Harness Desktop 四种皮肤主题](https://dsh.cubee.chat/assets/theme-gallery-local.v1.webp)
+
+<p align="center"><sub>在 Skin Center 中预览主题效果，满意后再应用到工作区。</sub></p>
+
+![DeepSeek Harness Desktop 插件市场搜索 GenUI 并显示安装状态](https://dsh.cubee.chat/assets/plugin-market-local.v2.webp)
+
+![DeepSeek Harness Desktop Skills 列表与 MCP 设置](https://dsh.cubee.chat/assets/skills-mcp-local.v2.webp)
 
 ## 适合这些工作
 
 - 希望在 Windows 上直接使用 DSH，又不想维护 Node.js、pnpm 和 Web 服务环境。
 - 需要在一个工作区中使用对话、文件、Git、本地终端、插件市场和可交互 GenUI。
-- 需要管理项目 Skills 与 MCP 连接，同时保留本地优先、可检查的运行边界。
+- 需要管理项目 Skills 与 MCP 连接，并保持本地优先的运行方式。
 - 需要关闭窗口后继续任务，并从系统托盘恢复或重启 DSH Host。
 
 ## 开箱能力
@@ -93,4 +115,4 @@ npm run coverage
 
 本仓库维护 Tauri 桌面壳、自包含运行时、Windows 安装与安全边界，不重写 DSH Web UI 或 Agent 核心。DSH、Market、pnpm、Web 前端及第三方插件按 lockfile 固定版本，并分别遵循上游许可证。桌面壳使用 [MIT License](LICENSE)。
 
-觉得项目解决了你的 Windows DSH 安装或工作流问题，可以 Star 仓库；更重要的是，请在真实项目中完成一次任务，并把安装或启动问题提交到 Issue。
+如果项目解决了你的 Windows DSH 安装或工作流问题，欢迎 Star 仓库；遇到安装或启动问题，请提交 Issue。
