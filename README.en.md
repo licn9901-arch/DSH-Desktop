@@ -21,7 +21,6 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/licn9901-arch/deepseek-harness-desktop/actions/workflows/windows-ci.yml"><img src="https://img.shields.io/github/actions/workflow/status/licn9901-arch/deepseek-harness-desktop/windows-ci.yml?branch=main&label=Windows%20CI" alt="Windows CI"></a>
   <a href="https://github.com/licn9901-arch/deepseek-harness-desktop/releases"><img src="https://img.shields.io/github/v/release/licn9901-arch/deepseek-harness-desktop?include_prereleases&label=version" alt="Current version"></a>
   <a href="https://github.com/licn9901-arch/deepseek-harness-desktop/releases"><img src="https://img.shields.io/github/downloads/licn9901-arch/deepseek-harness-desktop/total?label=downloads" alt="Total downloads"></a>
   <img src="https://img.shields.io/badge/platform-Windows%20x64-0078D4" alt="Windows x64">
