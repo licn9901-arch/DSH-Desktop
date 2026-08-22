@@ -106,20 +106,29 @@ DSH `v0.1.1-rc.1` 的[官方发布说明](https://github.com/deepseek-ai/deepsee
 - [x] 更新 GenUI Skill 版本和内容 SHA-256；`0.8.6` 的 Skill 内容摘要与 `0.8.4` 相同。
 - [x] 更新第三方声明、候选发布说明、About 文案和 bundle 数量；公开 README 的版本表仍展示当前已发布的 `preview.12`。
 - [x] 在开发工作区重新完成 runtime/plugin staging、格式检查、Clippy、`100 + 12` 项 Rust 测试、21 项 Node 测试、
-  `82.49%` 核心行覆盖率、三组零漏洞 audit、pnpm 兼容矩阵和 payload verify；旧 `rc.8` 候选报告不复用。
+  `82.51%` 核心行覆盖率、三组零漏洞 audit、pnpm 兼容矩阵和 payload verify；旧 `rc.8` 候选报告不复用。
 - [x] 对 Sidebar 已内联的 Mermaid 依赖执行 lockfile 可达性裁剪；payload 为 11,329 个文件、
-  242,193,184 字节，三个 ZIP 共 93,159,595 字节（88.84 MiB），继续满足 90 MiB 预算。
+  242,194,493 字节，三个 ZIP 共 93,159,695 字节（88.84 MiB），继续满足 90 MiB 预算。
 - [x] 确认公开 `preview.12` 没有完整 release-gate 报告；安装器、同名 `.sha256` 与 GitHub Asset
   digest 三方基线均为 `df1ce1376ca57395492bbf5f53d4b56c840c23e1527b53cf347abd09b6927d82`，不补造历史报告。
-- [ ] 完成 DSH `0.1.1-rc.2` 原生视觉、文件/会话引用与 SQLite 升级验证。
-- [ ] 在干净 release worktree 完成两次可复现构建、各插件聚焦验证和完整 preview 发布门禁，所有正式报告绑定同一 release commit。
-- [ ] 记录 release commit、安装器 SHA-256、payload digest、门禁报告与最终发布地址。
+- [x] 完成 DSH `0.1.1-rc.2` 原生视觉、文件/会话引用与 SQLite 升级验证。
+- [x] 在干净 release worktree 完成两次可复现构建、各插件聚焦验证、9 场景升级矩阵和 20 对启动性能比较。
+- [x] 记录 release commit、安装器 SHA-256、payload digest、门禁报告与最终发布地址。
+
+### 发布结果
+
+- Release commit：`d1974dfc599eae575952847aac68802c30331ea7`
+- 安装器 SHA-256：`451de3f5ed4966f6c3aa4cc1dcbe90cf4dad91ce61ec11d5e75cbb96b33ebc81`
+- Payload digest：`b8fd07c04725078ee43fb8eaeb65b46c214198aee6998205c696c8cc3b43be78`
+- Release URL：https://github.com/licn9901-arch/deepseek-harness-desktop/releases/tag/v0.1.0-preview.13
+- 资产审计：18 个资产回下载后名称、大小和 SHA-256 全部一致；公开安装器 URL 返回 `HTTP 206`。
+- 门禁决策：同一提交的 14 个行为阶段全部通过，最终重新构建修复了旧 build-report 身份；根据发布指令豁免再次重复完整统一门禁，正式报告保留 `approved-with-user-waiver` 记录。
 
 ## 发布记录
 
 | 周次 | 桌面版本 | DSH | Market | Bundle/Skill | 状态 | 结果或阻断原因 |
 |---|---|---|---|---:|---|---|
-| 2026-W34 | `0.1.0-preview.13` | `0.1.1-rc.2` | `1.17.1` | 7 / 1 | 候选重新冻结 | 开发工作区自动验证通过，payload 88.84 MiB；待干净提交正式门禁、SQLite/视觉实机验收与安装器 smoke |
+| 2026-W34 | `0.1.0-preview.13` | `0.1.1-rc.2` | `1.17.1` | 7 / 1 | 已发布 | 原生视觉与 SQLite 实机验收通过；18 个资产公开审计一致，安装器 87.46 MiB，payload 88.84 MiB；最终重复统一门禁按发布指令豁免并留痕 |
 
 后续每周复制上一行并更新实际结果，不覆盖历史记录。版本未变化时也要明确写“保持不变”，不能用空白表示。
 
