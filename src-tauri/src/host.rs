@@ -115,7 +115,7 @@ impl HostSupervisor {
             return Err("host is already running".to_owned());
         }
         log_app(&format!(
-            "spawning: {} --expose-internals {} web --patch {} --host 127.0.0.1 --port 0 (cwd: {})",
+            "spawning: {} --expose-internals {} web --no-open --patch {} --host 127.0.0.1 --port 0 (cwd: {})",
             paths.node.display(),
             paths.cli_entry.display(),
             paths.desktop_policy_patch.display(),
@@ -129,6 +129,7 @@ impl HostSupervisor {
             .arg("--expose-internals")
             .arg(&paths.cli_entry)
             .arg("web")
+            .arg("--no-open")
             .arg("--patch")
             .arg(&paths.desktop_policy_patch)
             .args(["--host", "127.0.0.1", "--port", "0"])
