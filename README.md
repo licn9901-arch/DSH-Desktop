@@ -48,8 +48,8 @@
 
 | 项目 | 内容 |
 |---|---|
-| 版本 | `v0.1.0-preview.12`，下一公开通道将转为 Beta |
-| 安装包 | `87.57 MiB`，自包含 Node.js、DSH、Market、pnpm 与预置插件 |
+| 版本 | `v0.1.0-preview.13`，下一公开通道将转为 Beta |
+| 安装包 | `87.46 MiB`，自包含 Node.js、DSH、Market、pnpm 与预置插件 |
 | 系统 | Windows 10 22H2 / Windows 11 x64，依赖系统 WebView2 |
 | 首次启动 | 无需联网，不要求预装 Node.js、DSH 或 pnpm |
 | 签名 | 暂无 Authenticode；请核对 SHA-256 后安装 |

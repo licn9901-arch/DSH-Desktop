@@ -48,8 +48,8 @@
 
 | Item | Details |
 |---|---|
-| Version | `v0.1.0-preview.12`; the next public channel will move to Beta |
-| Installer | `87.57 MiB`, including Node.js, DSH, Market, pnpm, and bundled plugins |
+| Version | `v0.1.0-preview.13`; the next public channel will move to Beta |
+| Installer | `87.46 MiB`, including Node.js, DSH, Market, pnpm, and bundled plugins |
 | System | Windows 10 22H2 / Windows 11 x64 with the system WebView2 runtime |
 | First launch | Works offline; no separate Node.js, DSH, or pnpm installation |
 | Signing | No Authenticode yet; verify the SHA-256 before installation |
