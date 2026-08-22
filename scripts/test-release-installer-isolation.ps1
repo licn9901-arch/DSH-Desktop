@@ -81,6 +81,7 @@ $isolationScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'release-in
 $installerSmokeScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'installer-smoke.ps1') -Raw
 $upgradeMatrixScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'upgrade-matrix.ps1') -Raw
 $benchmarkScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'benchmark-compare.ps1') -Raw
+$artifactScript = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'write-release-artifacts.ps1') -Raw
 if ($smokeScript -notmatch '\[switch\]\$UseInstalledWebViewDataDirectory') {
     throw 'Smoke test does not expose the installed WebView data-directory mode.'
 }
@@ -106,6 +107,9 @@ foreach ($retiredPackage in @('dsh-at-file', '@liustack/modlens')) {
     if ($upgradeMatrixScript -notmatch [regex]::Escape($retiredPackage)) {
         throw "Upgrade matrix does not verify retired package $retiredPackage."
     }
+}
+if ($artifactScript -notmatch [regex]::Escape("'scripts\prune-plugin-client-dependencies.mjs'")) {
+    throw 'Release artifact assembly does not bind debug symbols to the plugin dependency pruning input.'
 }
 if (-not $isolationScript.Contains('"_?=$installRoot"')) {
     throw 'Installer isolation helper does not fall back to direct NSIS uninstall mode.'

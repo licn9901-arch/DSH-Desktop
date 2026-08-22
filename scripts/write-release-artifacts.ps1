@@ -56,6 +56,7 @@ function Get-CurrentPayloadCacheInputs {
         'scripts\patch-directory-picker.ps1',
         'scripts\stage-plugins.ps1',
         'scripts\optimize-plugin-previews.mjs',
+        'scripts\prune-plugin-client-dependencies.mjs',
         'scripts\stage-payload.ps1'
     )
     $lines = @(
