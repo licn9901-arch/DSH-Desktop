@@ -6,6 +6,9 @@
 [`15148dbd` 的 DSH 官方基础文档](https://github.com/deepseek-ai/deepseek-harness/blob/15148dbd9a1d1f1ef1a26e5749b32af0cd663935/docs/user/develop/basic/index.md)，
 行为判定以锁定 npm 包的实际入口、配置和 loader smoke 为准，不跟随主分支文档漂移。
 
+macOS 尚未进入本实现基线；平台适配完成后的单架构打包、包体预算、签名公证与发布验收见
+[macOS 单架构打包与发布门禁](macos-packaging-and-release.md)。
+
 ## 当前状态
 
 payload 链路已经实现，并已由 preview.8、preview.9 连续完成两轮公开门禁。preview.10 已将
