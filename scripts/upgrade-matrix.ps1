@@ -22,6 +22,8 @@ $reportPath = if ([string]::IsNullOrWhiteSpace($Output)) {
     [System.IO.Path]::GetFullPath((Join-Path $repoRoot $Output))
 }
 $releaseRoot = [System.IO.Path]::GetFullPath((Join-Path $repoRoot ".release-work\$($package.version)"))
+$settingsPackage = '@dsh-desktop/settings'
+$retiredDesktopPackages = @('dsh-at-file', '@liustack/modlens')
 if (-not $reportPath.StartsWith($releaseRoot.TrimEnd('\') + '\', [System.StringComparison]::OrdinalIgnoreCase)) {
     throw "Upgrade matrix report must stay under $releaseRoot"
 }
@@ -143,7 +145,7 @@ function Get-MatrixWebProfile {
     return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
 }
 
-# 写回测试专用 profile；只用于模拟用户在 preview.10 中卸载旧设置包。
+# 写回测试专用 profile；用于模拟用户卸载设置包或接管退役插件。
 function Set-MatrixWebProfile {
     param(
         [Parameter(Mandatory = $true)]$Context,
@@ -151,6 +153,107 @@ function Set-MatrixWebProfile {
     )
     $path = Join-Path $Context.DshHome 'profiles\web\package.json'
     $Profile | ConvertTo-Json -Depth 20 | Set-Content -LiteralPath $path -Encoding utf8NoBOM
+}
+
+# 读取桌面托管插件状态，供直接前序版本和退役迁移断言使用。
+function Get-MatrixPluginState {
+    param([Parameter(Mandatory = $true)]$Context)
+    $path = Join-Path $Context.DshHome 'desktop-managed\plugins-state.json'
+    if (-not (Test-Path -LiteralPath $path -PathType Leaf)) { throw "Managed plugin state is missing: $path" }
+    return Get-Content -LiteralPath $path -Raw | ConvertFrom-Json
+}
+
+# 确认直接前序安装器真实提供当前设置包和两项待退役桌面插件。
+function Assert-MatrixPreviousPayloadState {
+    param([Parameter(Mandatory = $true)]$Context)
+    $profile = Get-MatrixWebProfile $Context
+    $state = Get-MatrixPluginState $Context
+    $bundles = @($profile.dsh.profile.bundles)
+    foreach ($package in @($settingsPackage) + $retiredDesktopPackages) {
+        if ($null -eq $profile.dependencies.PSObject.Properties[$package] -or
+            $package -notin $bundles -or
+            $null -eq $state.managed.PSObject.Properties[$package]) {
+            throw "Previous payload fixture does not contain managed package $package."
+        }
+    }
+}
+
+# 验证托管退役同时删除 dependency、bundle、状态和 profile junction。
+function Assert-MatrixRetiredPluginsRemoved {
+    param([Parameter(Mandatory = $true)]$Context)
+    $profile = Get-MatrixWebProfile $Context
+    $state = Get-MatrixPluginState $Context
+    $bundles = @($profile.dsh.profile.bundles)
+    $profileModules = Join-Path $Context.DshHome 'profiles\web\node_modules'
+    foreach ($package in $retiredDesktopPackages) {
+        $link = Join-Path $profileModules ($package.Replace('/', '\'))
+        if ($null -ne $profile.dependencies.PSObject.Properties[$package] -or
+            $package -in $bundles -or
+            $null -ne $state.managed.PSObject.Properties[$package] -or
+            (Test-Path -LiteralPath $link)) {
+            throw "Retired managed package was not fully removed: $package"
+        }
+    }
+}
+
+# 将 ModLens 从桌面 junction 复制为用户目录，模拟用户在升级前接管同名插件。
+function Set-MatrixModLensUserTakeover {
+    param([Parameter(Mandatory = $true)]$Context)
+    $package = '@liustack/modlens'
+    $state = Get-MatrixPluginState $Context
+    $managed = $state.managed.PSObject.Properties[$package].Value
+    if ($null -eq $managed) { throw 'Previous payload does not manage ModLens.' }
+    $source = [System.IO.Path]::GetFullPath([string]$managed.linkTarget)
+    if (-not (Test-Path -LiteralPath $source -PathType Container)) {
+        throw "Managed ModLens target is missing: $source"
+    }
+    $link = Join-Path $Context.DshHome 'profiles\web\node_modules\@liustack\modlens'
+    $linkItem = Get-Item -LiteralPath $link -Force
+    if (($linkItem.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -eq 0) {
+        throw "Managed ModLens profile entry is not a junction: $link"
+    }
+    $target = [string]@($linkItem.Target)[0]
+    if (-not [System.IO.Path]::GetFullPath($target).Equals($source, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Managed ModLens junction target mismatch: $target"
+    }
+    [System.IO.Directory]::Delete($link)
+    Copy-Item -LiteralPath $source -Destination $link -Recurse
+    $marker = Join-Path $link 'user-takeover-sentinel.txt'
+    Set-Content -LiteralPath $marker -Value 'preserve user ModLens' -Encoding utf8NoBOM
+    $profile = Get-MatrixWebProfile $Context
+    $profile.dependencies.PSObject.Properties[$package].Value = 'file:node_modules/@liustack/modlens'
+    Set-MatrixWebProfile $Context $profile
+    return $marker
+}
+
+# 验证用户接管的 ModLens 保持为真实目录，同时退出桌面托管状态。
+function Assert-MatrixModLensUserTakeoverPreserved {
+    param(
+        [Parameter(Mandatory = $true)]$Context,
+        [Parameter(Mandatory = $true)][string]$Marker
+    )
+    $package = '@liustack/modlens'
+    $profile = Get-MatrixWebProfile $Context
+    $state = Get-MatrixPluginState $Context
+    $bundles = @($profile.dsh.profile.bundles)
+    $link = Split-Path $Marker -Parent
+    $item = Get-Item -LiteralPath $link -Force
+    if ([string]$profile.dependencies.PSObject.Properties[$package].Value -ne 'file:node_modules/@liustack/modlens' -or
+        $package -notin $bundles -or
+        $null -ne $state.managed.PSObject.Properties[$package] -or
+        ($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0 -or
+        (Get-Content -LiteralPath $Marker -Raw).Trim() -ne 'preserve user ModLens') {
+        throw 'User-taken-over ModLens was changed or remained desktop-managed.'
+    }
+    foreach ($retired in @('dsh-at-file')) {
+        $retiredLink = Join-Path $Context.DshHome "profiles\web\node_modules\$retired"
+        if ($null -ne $profile.dependencies.PSObject.Properties[$retired] -or
+            $retired -in $bundles -or
+            $null -ne $state.managed.PSObject.Properties[$retired] -or
+            (Test-Path -LiteralPath $retiredLink)) {
+            throw "Other retired package remained during user takeover: $retired"
+        }
+    }
 }
 
 # 验证设置包的依赖和 bundle 状态，防止只改 dependency 或只改 activation 的半迁移。
@@ -164,7 +267,7 @@ function Assert-MatrixSettingsState {
     $hasNewDependency = $null -ne $profile.dependencies.PSObject.Properties['@dsh-desktop/settings']
     $bundles = @($profile.dsh.profile.bundles)
     if ($hasLegacyDependency -or '@dsh-desktop/theme-settings' -in $bundles) {
-        throw 'Legacy theme-settings remained after preview.11 coordination.'
+        throw 'Legacy theme-settings remained after current coordination.'
     }
     if ($hasNewDependency -ne $ExpectedNewSettings -or
         (('@dsh-desktop/settings' -in $bundles) -ne $ExpectedNewSettings)) {
@@ -477,14 +580,11 @@ try {
             }
         }
 
-        Invoke-MatrixScenario 'payload-settings-migration' {
+        Invoke-MatrixScenario 'payload-managed-retirement-and-settings-preserved' {
             param($context)
             Install-MatrixBuild $context $previousPayloadPath $true
             Invoke-MatrixSmoke $context
-            $oldProfile = Get-MatrixWebProfile $context
-            if ($null -eq $oldProfile.dependencies.PSObject.Properties['@dsh-desktop/theme-settings']) {
-                throw 'Preview.10 fixture does not contain managed theme-settings.'
-            }
+            Assert-MatrixPreviousPayloadState $context
             $hindsightPath = Join-Path $context.Root '.hindsight\coding-agent.json'
             New-Item -ItemType Directory -Force -Path (Split-Path $hindsightPath -Parent) | Out-Null
             $hindsightBytes = [Text.Encoding]::UTF8.GetBytes('{"apiUrl":"http://127.0.0.1:8888","custom":"preserve"}')
@@ -493,6 +593,7 @@ try {
             Install-MatrixBuild $context $payloadPath $true
             Invoke-MatrixSmoke $context
             Assert-MatrixSettingsState $context $true
+            Assert-MatrixRetiredPluginsRemoved $context
             if ([Convert]::ToHexString([IO.File]::ReadAllBytes($hindsightPath)) -ne
                 [Convert]::ToHexString($hindsightBytes)) {
                 throw 'Settings migration changed existing Hindsight configuration bytes.'
@@ -503,18 +604,35 @@ try {
             param($context)
             Install-MatrixBuild $context $previousPayloadPath $true
             Invoke-MatrixSmoke $context
+            Assert-MatrixPreviousPayloadState $context
             $profile = Get-MatrixWebProfile $context
-            $profile.dependencies.PSObject.Properties.Remove('@dsh-desktop/theme-settings')
+            $profile.dependencies.PSObject.Properties.Remove('@dsh-desktop/settings')
             $profile.dsh.profile.bundles = @(
-                $profile.dsh.profile.bundles | Where-Object { $_ -ne '@dsh-desktop/theme-settings' }
+                $profile.dsh.profile.bundles | Where-Object { $_ -ne '@dsh-desktop/settings' }
             )
             Set-MatrixWebProfile $context $profile
 
             Install-MatrixBuild $context $payloadPath $true
             Invoke-MatrixSmoke $context
             Assert-MatrixSettingsState $context $false
+            Assert-MatrixRetiredPluginsRemoved $context
             Invoke-MatrixSmoke $context
             Assert-MatrixSettingsState $context $false
+        }
+
+        Invoke-MatrixScenario 'payload-retired-plugin-user-takeover' {
+            param($context)
+            Install-MatrixBuild $context $previousPayloadPath $true
+            Invoke-MatrixSmoke $context
+            Assert-MatrixPreviousPayloadState $context
+            $marker = Set-MatrixModLensUserTakeover $context
+
+            Install-MatrixBuild $context $payloadPath $true
+            Invoke-MatrixSmoke $context
+            Assert-MatrixSettingsState $context $true
+            Assert-MatrixModLensUserTakeoverPreserved $context $marker
+            Invoke-MatrixSmoke $context
+            Assert-MatrixModLensUserTakeoverPreserved $context $marker
         }
     }
     $matrixPassed = $true
